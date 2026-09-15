@@ -129,6 +129,20 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
 - Suite 14/14 con exit code reale; smoke end-to-end WASP-77 A b + verify_output PASS;
   verify_output sull'archivio annuale PASS; git diff --check OK.
 
+# Presentazione PDF cronologica (16 settembre 2026)
+
+- Solo presentazione, zero cambi a classificazione, score, ruoli o selezione:
+  i tre PDF di selezione sono ora in ordine cronologico GLOBALE per centro locale
+  (mid_local, Europe/Rome), con separatori mensili (SETTEMBRE 2026, ...) e
+  intestazione esplicita per evento: TARGET — ROLE, centro locale con timezone,
+  classe, score, nota "Tabella TAPIR originale: orari UTC" (valori TAPIR invariati).
+- Pagina per PDF: 143/89/449 -> 102/18/54 eventi (uno per pagina, ordine globale).
+  L'insieme selezionato e' identico (174 eventi, 58 target); i test verificano
+  l'uguaglianza prima/dopo e che l'ordinamento ignori i nomi dei target.
+- 18/18 test (4 nuovi: ordine globale, confine d'anno, offset DST +02/+01,
+  insieme selezione invariato). verify_output PASS; controllo visivo di prima
+  pagina, cambio mese (OTTOBRE 2026 a pagina 7) e ultima pagina: OK.
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello

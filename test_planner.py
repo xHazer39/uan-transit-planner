@@ -217,4 +217,58 @@ class SelectionChecks(unittest.TestCase):
         self.assertNotIn('Y b',compute_selection([dict(ev(20,0,99.0),name='Y b',logistics_class='P3')],p))
 
 
+class ChronologyChecks(unittest.TestCase):
+    def setUp(self):
+        from reports import chronological_selection
+        self.chrono=chronological_selection
+    def groups(self):
+        from datetime import datetime,timezone,timedelta
+        t0=datetime(2026,1,1,tzinfo=timezone.utc)
+        def ev(cycle,days,cat='PRIMA SCELTA',score=90.0):
+            mid=t0+timedelta(days=days)
+            return dict(name='',mid_utc=mid.astimezone(timezone.utc).isoformat(),cycle=cycle,
+                        category=cat,score=score,selection_role='')
+        # Nomi scelti per far fallire qualunque ordinamento alfabetico.
+        zeta=('Zeta b',[('PRIMARY',dict(ev(1,287),mid_local='2026-10-14T22:29:00+02:00',name='Zeta b')),
+                        ('BACKUP1',dict(ev(2,318),mid_local='2026-11-14T22:29:00+01:00',name='Zeta b')),
+                        ('BACKUP2',dict(ev(3,342),mid_local='2026-12-08T22:29:00+01:00',name='Zeta b'))])
+        alpha=('Alpha b',[('PRIMARY',dict(ev(4,258),mid_local='2026-09-16T22:37:00+02:00',name='Alpha b')),
+                          ('BACKUP1',dict(ev(5,296),mid_local='2027-05-29T23:45:00+02:00',name='Alpha b',cat='ALTERNATIVE')),
+                          ('BACKUP2',dict(ev(6,303),mid_local='2027-06-05T23:36:00+02:00',name='Alpha b',cat='DA VALUTARE'))])
+        return [zeta,alpha]
+    def test_global_order_ignores_target_name_and_keeps_roles(self):
+        flat=self.chrono(self.groups())
+        seq=[(name,role,e['cycle']) for name,role,e in flat]
+        self.assertEqual(seq,[('Alpha b','PRIMARY',4),('Zeta b','PRIMARY',1),
+                              ('Zeta b','BACKUP1',2),('Zeta b','BACKUP2',3),
+                              ('Alpha b','BACKUP1',5),('Alpha b','BACKUP2',6)])
+    def test_year_boundary_december_before_january(self):
+        flat=self.chrono(self.groups())
+        mids=[e['mid_local'] for _,_,e in flat]
+        self.assertLess([m for m in mids if m.startswith('2026-12')][0],
+                        [m for m in mids if m.startswith('2027-01') or m.startswith('2027-0')][0])
+        self.assertTrue([m for m in mids if m.startswith('2027-05')][0] >
+                        [m for m in mids if m.startswith('2026-12')][0])
+    def test_dst_offsets_parsed_as_aware_datetimes(self):
+        # +02:00 (estate) e +01:00 (inverno) si confrontano senza errori e in ordine reale.
+        flat=self.chrono(self.groups())
+        from datetime import datetime
+        parsed=[datetime.fromisoformat(e['mid_local']) for _,_,e in flat]
+        self.assertTrue(all(x.utcoffset() is not None for x in parsed))
+        self.assertEqual(parsed,list(sorted(parsed)))
+        self.assertEqual({x.utcoffset().total_seconds() for x in parsed},{7200.0,3600.0})
+        self.assertEqual(parsed[0].utcoffset().total_seconds(),7200)   # estate 2026
+    def test_selection_set_identical_after_chronology(self):
+        groups=self.groups()
+        before=sorted((name,role,e['cycle'],e['category'],e['selection_role'])
+                      for name,roles in groups for role,e in roles)
+        flat=self.chrono(groups)
+        after=sorted((name,role,e['cycle'],e['category'],e['selection_role'])
+                     for name,role,e in flat)
+        self.assertEqual(before,after)
+        # Nessun evento aggiunto o perso; i ruoli restano quelli originali.
+        self.assertEqual(len(flat),6)
+        self.assertEqual({r for _,r,_ in flat},{'PRIMARY','BACKUP1','BACKUP2'})
+
+
 if __name__=='__main__': unittest.main()

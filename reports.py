@@ -189,28 +189,48 @@ _HEAD=('<!doctype html><html lang="it"><meta charset="utf-8"><title>{title}</tit
        '<base href="'+BASE+'">{assets}<style>@page{{size:A4 landscape;margin:9mm}}'
        'body{{font-family:"DejaVu Sans",sans-serif;font-size:11px}}h1{{font-size:17px;margin:2px 0}}'
        'h2{{font-size:13px}}h3{{font-size:12px}}h2.tgthdr{{border-bottom:2px solid #123b50;padding-bottom:2px}}'
+       'h2.monthhdr{{font-size:15px;margin:10px 0 6px;color:#123b50;letter-spacing:1px}}'
        '.pb{{page-break-after:always}}.coverbox{{border:2px solid #000;padding:6px 10px;margin-bottom:8px}}'
        '.rolehdr{{margin:6px 0 2px}}</style><body>{body}</body></html>')
 
 
-def selection_tapir_pdf(path,title,groups,archive,note):
-    """Selection PDF: one section per target with PRIMARY/BACKUP1/BACKUP2 TAPIR tables."""
-    assets='';intro='';body=[];first_fragment=True
-    for name,roles in groups:
-        body.append('<div class="pb"><h2 class="tgthdr">'+html.escape(name)+'</h2>')
-        for role,e in roles:
-            page=(archive/e['tapir_event_html']).read_text()
-            pieces=_tapir_pieces(page)
-            if pieces is None: return False
-            a,i,t=pieces
-            if first_fragment:
-                assets+=a;intro+=i;first_fragment=False
-            body.append(f'<p class="rolehdr"><b>{role}</b> — centro {html.escape(e["mid_local"][:16].replace("T"," "))}'
-                        f' (score {fmt(e.get("score"))}, {html.escape(e["category"])})</p>')
-            body.append(t)
+MONTHS_IT=('GENNAIO','FEBBRAIO','MARZO','APRILE','MAGGIO','GIUGNO',
+           'LUGLIO','AGOSTO','SETTEMBRE','OTTOBRE','NOVEMBRE','DICEMBRE')
+
+
+def chronological_selection(groups):
+    """Presentation-only: flatten per-target roles into one global list ordered by
+    mid_local (timezone-aware ISO, Europe/Rome). Never changes roles or classes."""
+    flat=[(name,role,e) for name,roles in groups for role,e in roles]
+    flat.sort(key=lambda item:datetime.fromisoformat(item[2]['mid_local']))
+    return flat
+
+
+def selection_tapir_pdf(path,title,groups,archive,note,tz):
+    """Selection PDF in global chronological order with month separators."""
+    flat=chronological_selection(groups)
+    assets='';intro='';body=[];first_fragment=True;current_month=None
+    for name,role,e in flat:
+        mid=datetime.fromisoformat(e['mid_local'])
+        body.append('<div class="pb">')
+        if (mid.year,mid.month)!=current_month:
+            body.append('<h2 class="monthhdr">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</h2>')
+            current_month=(mid.year,mid.month)
+        body.append('<h2 class="tgthdr">'+html.escape(name)+' — '+role+'</h2>')
+        body.append('<p>Centro locale: '+mid.strftime('%d/%m/%Y %H:%M')+' '+html.escape(tz)
+                    +'<br/>Classe: '+html.escape(e['category'])
+                    +'<br/>Score: '+fmt(e.get('score'))+'</p>')
+        page=(archive/e['tapir_event_html']).read_text()
+        pieces=_tapir_pieces(page)
+        if pieces is None: return False
+        a,i,t=pieces
+        if first_fragment:
+            assets+=a;intro+=i;first_fragment=False
+        body.append('<p style="font-size:10px">Tabella TAPIR originale: orari UTC.</p>')
+        body.append(t)
         body.append('</div>')
     cover=('<div class="coverbox"><h1>'+html.escape(title)+'</h1>'
-           '<p><b>'+str(len(groups))+' target: selezione operativa PRIMARY + BACKUP1 + BACKUP2.</b></p></div>'
+           '<p><b>'+str(len(groups))+' target, '+str(len(flat))+' eventi selezionati in ordine cronologico.</b></p></div>'
            '<p style="font-size:10px">'+note+'</p>')
     doc=_HEAD.format(title=title,assets=assets,body=cover+intro+'\n'.join(body))
     return _chromium_render(doc,path)
@@ -248,7 +268,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         if not groups:
             make_pdf(target,category,[],target_map,p); continue
         try:
-            if all(e.get('tapir_event_html') for e in flat) and selection_tapir_pdf(target,category,groups,archive,note):
+            if all(e.get('tapir_event_html') for e in flat) and selection_tapir_pdf(target,category,groups,archive,note,p['timezone']):
                 continue
         except (OSError,KeyError):
             pass
