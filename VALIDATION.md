@@ -64,6 +64,28 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
   `verify_output.py`: PASS su entrambi; una pagina per evento (19/7/40 e 5/4/19).
 - Suite 11/11 dopo le modifiche. Smoke end-to-end WASP-77 A b (2 giorni): PASS.
 
+# Run annuale 67 target con policy v1 (15-16 settembre 2026)
+
+- Policy UAN v1 implementata: copertura >=90% operativa (100% ideale), baseline per
+  lato <50% debole / 50-79% accettabile / >=80% buona, etichetta geometria target
+  (NON CONSIGLIATO DAL SITO <15°, MOLTO DIFFICILE 15-20°, MARGINALE 20-30°, BUONO
+  30-40°, MOLTO FAVOREVOLE >=40°), score secondario 0-100 (30/15/20/10/10/10/5,
+  quota saturata a 40°, mai sopra le classi), PRIMARY+BACKUP1+BACKUP2 per target.
+- Run: 67 target UAN, 365 giorni da 2026-09-15, effemeridi NASA aggiornate.
+  Completato in 5809 s (~97 min). Output: GaetanoTrovato_20260915_192917_339538.
+- 13264 eventi: 439 PRIMA SCELTA, 244 ALTERNATIVE, 2439 DA VALUTARE, 10142 NON
+  CONSIGLIATO. In fascia pratica (fino alle 01:00): 143/89/449.
+- Geometrie: 51 MOLTO FAVOREVOLE, 5 BUONO, 2 MARGINALE, 2 MOLTO DIFFICILE,
+  7 NON CONSIGLIATO DAL SITO (incl. WASP-121 b ~10°, WASP-4 b ~7°).
+- Coerenza col lavoro storico: WASP-77 A b MOLTO FAVOREVOLE con PRIMARY PRIMA SCELTA
+  (10/11/2026, score 96.8); CoRoT-11 b geometria favorevole ma eventi DA VALUTARE;
+  WASP-142 b MARGINALE con migliori eventi DA VALUTARE; nessun primary per WASP-121/4 b.
+- 14 anomalie TAPIR (es. 777%, 1422%) segnalate e conservate con ricalcolo indipendente
+  (36%, 22%, ...), classe decisa dal ricalcolo, mai dal valore TAPIR.
+- Massimo residuo temporale BJD_TDB/UTC: 0,046 s. Enumerazione cicli completa senza
+  buchi/duplicati. PDF categoria in formato TAPIR: 143+89+449 pagine, una per evento.
+- verify_output.py: PASS (hash, ZIP 44 MB, convergenza griglia <0,0001 pp).
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello
