@@ -86,6 +86,32 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
   buchi/duplicati. PDF categoria in formato TAPIR: 143+89+449 pagine, una per evento.
 - verify_output.py: PASS (hash, ZIP 44 MB, convergenza griglia <0,0001 pp).
 
+# Policy v2.1 (16 settembre 2026): Luna a 4 livelli, logistica separata, selezione per target
+
+- Implementata la v2.1 dall'audit `AUDIT_RIASSEGNAZIONE_UAN_v2.md`:
+  gerarchia rigida (timing -> geometria -> copertura -> baseline -> quota -> effemeride
+  -> Luna -> logistica -> score); copertura >=99.5% per PRIMA SCELTA (90-99.5 max
+  ALTERNATIVE); Luna BASSA/MODERATA/ALTA/ESTREMA con le 9 regole dell'audit (ESTREMA ->
+  DA VALUTARE); logistica P1/P2/P3 separata dalla qualità; reason_codes su ogni evento
+  (MOON_HIGH, ALTITUDE_MID_LOW, TARGET_GEOMETRY_MARGINALE, ...); score v2 30/20/20/15/10/5
+  senza magnitudine e profondità; selezione per target PRIMARY+BACKUP1+BACKUP2 con
+  diversificazione temporale (>=7 giorni, fallback >=3); PDF ridotti alla selezione.
+- 12/12 test (aggiunti: 9 esempi Luna dell'audit, frontiere 99.5/50/80, score v2,
+  diversificazione backup, pool P1).
+- Archivio annuale riclassificato offline (niente ricalcolo TAPIR/Astropy, solo policy):
+  13264 eventi -> PRIMA SCELTA 439->311, ALTERNATIVE 244->318, DA VALUTARE 2439->2493.
+  In fascia operativa P1: 2605 eventi. Selezionati 174 eventi su 58 target (73 primary
+  PRIMA SCELTA, 32 ALTERNATIVE, 69 DA VALUTARE; 9 target senza pool operativo).
+- Controlli spot contro l'audit: KELT-16 21/09 -> ALTERNATIVE/MODERATA; KELT-16 22/09 ->
+  ALTERNATIVE/ALTA; WASP-93 28/09, HAT-P-20 16/03, HAT-P-23 12/09 -> DA VALUTARE/ESTREMA;
+  WASP-135 23/09 -> ALTERNATIVE/MODERATA: tutti conformi.
+- Nuovi PDF: 68 + 12 + 36 pagine (era 143+89+449): solo PRIMARY/BACKUP per target,
+  tabelle TAPIR originali. verify_output.py: PASS (incl. selezione P1 e separazione backup).
+- Esempio selezione WASP-77 A b: PRIMARY 10/11/2026 (99.9), BACKUP1 10/12/2026 (99.9),
+  BACKUP2 09/01/2027 (96.9) — notti ben separate.
+- Fix durante l'implementazione: intro TAPIR ripetute nel PDF di selezione (ora solo
+  una); `tapir_anomaly` persa nel refactor (ripristinata, 14 anomalie ancora tracciate).
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello

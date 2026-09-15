@@ -1,5 +1,6 @@
 {
   "name": "Capodimonte",
+  "policy_version": "2.1",
   "latitude": 40.862861,
   "longitude": 14.255056,
   "height_m": 150,
@@ -11,15 +12,17 @@
   "extend_uncertainty": true,
   "session_start": "nautical_twilight",
   "session_end": "01:00",
+  "session_pref_start": "17:45",
   "sampling_seconds": 120,
   "preferred_altitude_deg": 30,
   "excellent_altitude_deg": 40,
   "severe_altitude_deg": 15,
-  "complete_tolerance_seconds": 1,
   "transit_operational_percent": 90,
+  "first_choice_min_percent": 99.5,
   "baseline_weak_percent": 50,
   "baseline_good_percent": 80,
   "maximum_uncertainty_minutes": 10,
-  "moon_bright_percent": 70,
-  "moon_close_deg": 40
+  "timing_residual_limit_seconds": 2,
+  "backup_preferred_separation_days": 7,
+  "backup_fallback_separation_days": 3
 }

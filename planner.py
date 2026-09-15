@@ -22,7 +22,7 @@ from urllib.request import urlopen,Request
 from zoneinfo import ZoneInfo
 from astropy.time import Time
 from observing import number,analyze
-from reports import slug,write_reports,BASE,CATEGORIES
+from reports import slug,write_reports,BASE,compute_selection
 
 ROOT=Path(__file__).resolve().parent
 NASA='https://exoplanetarchive.ipac.caltech.edu/'
@@ -280,21 +280,24 @@ def validate_profile(p):
     for k,lo,hi in [('latitude',-90,90),('longitude',-180,180),('height_m',-500,10000),
                     ('twilight_deg',-30,-1),('visibility_altitude_deg',0,89),('baseline_hours',0.5,24),
                     ('sampling_seconds',10,300),('preferred_altitude_deg',0,90),('severe_altitude_deg',0,90),
-                    ('excellent_altitude_deg',0,90),('complete_tolerance_seconds',0,60),
-                    ('transit_operational_percent',50,100),('baseline_weak_percent',0,100),
-                    ('baseline_good_percent',0,100),
-                    ('maximum_uncertainty_minutes',0,1440),('moon_bright_percent',0,100),('moon_close_deg',0,180)]:
+                    ('excellent_altitude_deg',0,90),('transit_operational_percent',50,100),
+                    ('first_choice_min_percent',50,100),('baseline_weak_percent',0,100),
+                    ('baseline_good_percent',0,100),('timing_residual_limit_seconds',0.1,60),
+                    ('backup_preferred_separation_days',0,60),('backup_fallback_separation_days',0,60),
+                    ('maximum_uncertainty_minutes',0,1440)]:
         v=number(p.get(k))
         if v is None or not lo<=v<=hi: raise ValueError(f'Profilo: {k} deve essere fra {lo} e {hi}')
     if p['baseline_weak_percent']>p['baseline_good_percent']:
         raise ValueError('Profilo: baseline_weak_percent non può superare baseline_good_percent')
+    if p['backup_fallback_separation_days']>p['backup_preferred_separation_days']:
+        raise ValueError('Profilo: fallback separazione backup supera quella preferita')
     if not isinstance(p['extend_uncertainty'],bool): raise ValueError('extend_uncertainty deve essere booleano')
     ZoneInfo(p['timezone'])
-    for k in ('session_start','session_end'):
+    for k in ('session_start','session_end','session_pref_start'):
         if k=='session_start' and p[k]=='nautical_twilight': continue
         if not re.fullmatch(r'\d{2}:\d{2}',p[k]): raise ValueError(k+' richiede HH:MM')
         t=time.fromisoformat(p[k])
-        if k=='session_start' and t.hour<12: raise ValueError('Inizio sessione fisso deve essere >=12:00')
+        if 'start' in k and t.hour<12: raise ValueError('Inizio sessione fisso deve essere >=12:00')
     return p
 
 
@@ -376,16 +379,21 @@ def main(argv=None):
             log(f'  {len(candidates)} eventi; controllo indipendente delle finestre...')
             for i,r in enumerate(candidates):
                 e=analyze(r,t,p,ground.get(round(float(r['jd_utc_exact']),7)))
-                if e['practical'] and e['category'] in CATEGORIES[:3]:
-                    try:
-                        e['tapir_event_html']=tapir_event_html(t,p,e,engine,raw,folder,i)
-                    except (ValueError,OSError,subprocess.SubprocessError) as exc:
-                        e['tapir_event_html']=None
-                        log(f'  ATTENZIONE: tabella TAPIR non generata per {t["name"]} ciclo {e["cycle"]}: {exc}')
                 events.append(e)
                 if (i+1)%25==0: log(f'  {t["name"]}: {i+1}/{len(candidates)}')
+        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.1)...')
+        selection=compute_selection(events,p)
+        tmap={t['name']:t for t in targets}
+        for tname,roles in selection.items():
+            t=tmap[tname];folder=archive/slug(tname)
+            for idx,(role,e) in enumerate(roles):
+                try:
+                    e['tapir_event_html']=tapir_event_html(t,p,e,engine,raw,folder,idx)
+                except (ValueError,OSError,subprocess.SubprocessError) as exc:
+                    e['tapir_event_html']=None
+                    log(f'  ATTENZIONE: tabella TAPIR non generata per {tname} ciclo {e["cycle"]}: {exc}')
         log('Generazione PDF, HTML e archivio...')
-        manifest['counts'],manifest['practical_counts']=write_reports(out,events,targets,rejected,manifest)
+        manifest['counts'],manifest['selection_counts']=write_reports(out,events,targets,rejected,manifest,selection)
         manifest['event_count']=len(events);manifest['excluded_targets']=rejected
         manifest['anomalies']=sum(e['tapir_anomaly'] for e in events)
         manifest['max_timing_residual_seconds']=max((abs(e['timing_residual_seconds']) for e in events),default=None)

@@ -36,8 +36,21 @@ for e in events:
         assert datetime.fromisoformat(e['egress_local'])<=datetime.fromisoformat(e['practical_transit_end_limit_local'])
         assert datetime.fromisoformat(e['ingress_local'])>=datetime.fromisoformat(e['practical_start_local'])
     if e['category']=='PRIMA SCELTA':
-        assert e['transit_percent']>=99.9 and e['altitude_min_deg']>=p['preferred_altitude_deg']
-        assert not e['moon_critical']
+        assert e['transit_percent']>=p['first_choice_min_percent']-0.05,(e['name'],e['transit_percent'])
+        assert e['altitude_min_deg']>=p['preferred_altitude_deg']-0.05
+        assert min(e['baseline_before_percent'],e['baseline_after_percent'])>=p['baseline_good_percent']-0.05
+        assert e['moon_risk']=='BASSA',('moon',e['name'],e['mid_utc'],e['moon_risk'])
+# Policy v2.1 selection: roles must be operational (P1) and temporally diversified.
+byt={}
+for e in events:
+    if e.get('selection_role'): byt.setdefault(e['name'],[]).append(e)
+for name,es in byt.items():
+    for e in es:
+        assert e['logistics_class']=='P1',('selected not P1',name,e['mid_utc'])
+        assert e['selection_role'] in ('PRIMARY','BACKUP1','BACKUP2')
+    for e in es[1:]:
+        gap=abs(e['mid_ts']-es[0]['mid_ts'])
+        assert gap>=p['backup_fallback_separation_days']*86400-120,('backup too close',name,gap/86400)
 # Re-evaluate up to three partial events at 30-second sampling, independent of rendering.
 convergence=[]
 for e in [e for e in events if 1<e['transit_percent']<99][:3]:

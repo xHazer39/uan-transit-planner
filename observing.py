@@ -87,7 +87,7 @@ def nautical_start(evening,latitude,longitude,height,zone_name,twilight):
 
 
 def geometry_label(max_alt,p):
-    """Policy UAN v1, phase 1: structural geometry of the target from this site."""
+    """Policy UAN v2.1, phase 2: structural geometry of the target from this site."""
     if max_alt < p['severe_altitude_deg']: return 'NON CONSIGLIATO DAL SITO'
     if max_alt < p['visibility_altitude_deg']: return 'MOLTO DIFFICILE'
     if max_alt < p['preferred_altitude_deg']: return 'MARGINALE'
@@ -95,57 +95,96 @@ def geometry_label(max_alt,p):
     return 'MOLTO FAVOREVOLE'
 
 
+# Policy UAN v2.1, phase 7: lunar risk levels (illumination %, separation deg).
+# ESTREMA/ALTA use strict separation (<); MODERATA uses inclusive (<=).
+MOON_RULES=(('ESTREMA',((90,40),(70,20),(40,10)),False),
+            ('ALTA',((80,60),(50,40),(20,20)),False),
+            ('MODERATA',((70,100),(50,70),(20,40)),True))
+
+
+def moon_risk(illum,sep,up):
+    """Lunar risk only when the Moon is above the horizon; below horizon = BASSA."""
+    if not up or illum is None or sep is None:
+        return 'BASSA'
+    for name,rules,inclusive in MOON_RULES:
+        for im,sm in rules:
+            if illum>=im and (sep<=sm if inclusive else sep<sm):
+                return name
+    return 'BASSA'
+
+
 def score(e,p):
-    """Secondary 0-1 ordering score (policy UAN v1). Never overrides the category:
-    a non-recommended event keeps its class no matter how high the score is."""
-    if e['moon_critical']:
-        moon=0.0
-    elif e['moon_up_during_transit']:
-        moon=1.0-(e['moon_illumination_percent']/100)*(1-min(e['moon_separation_deg'],180)/180)
-    else:
+    """Secondary 0-1 ordering score (policy UAN v2.1). Never overrides the class.
+    Magnitude and depth are deliberately excluded until a real instrument profile exists."""
+    up=e.get('moon_up_during_observable',e.get('moon_up_during_transit',False))
+    if not up or e['moon_illumination_percent'] is None or e['moon_separation_deg'] is None:
         moon=1.0
-    mag=e['magnitude']; mag_s=0.5 if mag is None else min(max((16.0-mag)/8.0,0.0),1.0)
-    dep=e['depth_ppt']; dep_s=0.5 if dep is None else min(dep/20.0,1.0)
+    else:
+        moon=1.0-(e['moon_illumination_percent']/100)*math.exp(-e['moon_separation_deg']/45)
+    if e.get('timing_check_failed'):
+        timing=0.0
+    elif e['uncertainty_minutes'] is None:
+        timing=0.5
+    else:
+        timing=1.0-min(e['uncertainty_minutes'],p['maximum_uncertainty_minutes'])/p['maximum_uncertainty_minutes']
     base=min(e['baseline_before_percent'],e['baseline_after_percent'])/100.0
     alt=min(max(e['altitude_mid_deg'],0.0),p['excellent_altitude_deg'])/p['excellent_altitude_deg']
-    return (0.30*e['transit_percent']/100.0+0.15*base+0.20*alt+0.10*moon
-            +0.10*mag_s+0.10*dep_s+0.05*e['practical_transit_percent']/100.0)
+    return (0.30*e['transit_percent']/100.0+0.20*base+0.20*alt+0.15*moon
+            +0.10*timing+0.05*e['practical_transit_percent']/100.0)
 
 
 def classify(e,p):
+    """Policy UAN v2.1 hierarchy. Returns (quality_class, human reason, reason_codes)."""
+    codes=[]
     if e['max_altitude_theoretical_deg'] < p['severe_altitude_deg']:
-        return 'NON CONSIGLIATO','Target basso per geometria del sito'
+        codes.append('TARGET_GEOMETRY_NOT_RECOMMENDED')
+        return 'NON CONSIGLIATO','Target basso per geometria del sito',codes
+    if e['max_altitude_theoretical_deg'] < p['preferred_altitude_deg']:
+        codes.append('TARGET_GEOMETRY_'+geometry_label(e['max_altitude_theoretical_deg'],p).replace(' ','_'))
     if e['altitude_max_deg'] < p['severe_altitude_deg'] or e['transit_percent']==0:
-        return 'NON CONSIGLIATO','Evento senza transito utile sopra la soglia e al buio'
-    if any(e.get(k) is None for k in ('uncertainty_minutes','moon_critical','magnitude','depth_ppt')):
-        return 'DA VALUTARE','Dati mancanti: impossibile assegnare una classe favorevole'
+        codes.append('EVENT_NOT_OBSERVABLE')
+        return 'NON CONSIGLIATO','Evento senza transito utile sopra la soglia e al buio',codes
+    if any(e.get(k) is None for k in ('uncertainty_minutes','magnitude','depth_ppt')) or e.get('moon_risk') is None:
+        codes.append('DATA_MISSING')
+        return 'DA VALUTARE','Dati mancanti: impossibile assegnare una classe favorevole',codes
     if e.get('ttv'):
-        return 'DA VALUTARE','TTV segnalate: effemeride lineare da verificare'
+        codes.append('TTV')
+        return 'DA VALUTARE','TTV segnalate: effemeride lineare da verificare',codes
     if e.get('timing_check_failed'):
-        return 'DA VALUTARE','Conversione temporale indipendente discordante'
+        codes.append('TIMING_FAILED')
+        return 'DA VALUTARE','Conversione temporale indipendente discordante',codes
     if e['uncertainty_minutes'] > p['maximum_uncertainty_minutes']:
-        return 'DA VALUTARE','Incertezza temporale elevata'
-    lost=e['duration_minutes']*60*(1-e['transit_percent']/100)
-    complete=lost<=p['complete_tolerance_seconds']
+        codes.append('UNCERTAINTY_HIGH')
+        return 'DA VALUTARE','Incertezza temporale elevata',codes
     baseline=min(e['baseline_before_percent'],e['baseline_after_percent'])
     if e['transit_percent'] < p['transit_operational_percent']:
-        return 'DA VALUTARE',f'Transito parziale: {e["transit_percent"]:.0f}% osservabile, sotto il minimo operativo ({p["transit_operational_percent"]:.0f}%)'
+        codes.append('TRANSIT_COVERAGE_LOW')
+        return 'DA VALUTARE',f'Transito parziale: {e["transit_percent"]:.0f}% osservabile, sotto il minimo operativo ({p["transit_operational_percent"]:.0f}%)',codes
     if baseline < p['baseline_weak_percent']:
-        return 'DA VALUTARE',f'Baseline debole: {baseline:.0f}% osservabile su almeno un lato'
+        codes.append('BASELINE_WEAK')
+        return 'DA VALUTARE',f'Baseline debole: {baseline:.0f}% osservabile su almeno un lato',codes
     if e['altitude_mid_deg'] < p['preferred_altitude_deg']:
-        return 'DA VALUTARE','Centro del transito sotto la quota desiderata'
+        codes.append('ALTITUDE_MID_LOW')
+        return 'DA VALUTARE','Centro del transito sotto la quota desiderata',codes
+    if e['moon_risk']=='ESTREMA':
+        codes.append('MOON_EXTREME')
+        return 'DA VALUTARE',f'Luna ESTREMA: {e["moon_illumination_percent"]:.0f}% a {e["moon_separation_deg"]:.1f}° (sopra orizzonte)',codes
     issues=[]
-    if not complete:
-        issues.append(f'transito {e["transit_percent"]:.0f}% (non completo)')
+    if e['transit_percent'] < p['first_choice_min_percent']:
+        codes.append('TRANSIT_PARTIAL')
+        issues.append(f'transito {e["transit_percent"]:.1f}% (sotto {p["first_choice_min_percent"]:.1f}%)')
     if baseline < p['baseline_good_percent']:
+        codes.append('BASELINE_MODERATE')
         issues.append(f'baseline {baseline:.0f}% (sotto {p["baseline_good_percent"]:.0f}%)')
-    if e['moon_critical']:
-        issues.append('Luna luminosa, vicina e sopra orizzonte')
     if e['altitude_min_deg'] < p['preferred_altitude_deg']:
+        codes.append('ALTITUDE_PART_LOW')
         issues.append('parte del transito sotto la quota desiderata')
-    if not issues:
-        return 'PRIMA SCELTA','Transito completo, baseline buona, quota e Luna nei limiti'
-    return 'ALTERNATIVE','Valido con compromessi: '+'; '.join(issues)
+    if e['moon_risk'] in ('MODERATA','ALTA'):
+        codes.append('MOON_'+e['moon_risk'].upper())
+        issues.append(f'Luna {e["moon_risk"].lower()}: {e["moon_illumination_percent"]:.0f}% a {e["moon_separation_deg"]:.1f}°')
+    if issues:
+        return 'ALTERNATIVE','Valido con compromessi: '+'; '.join(issues),codes
+    return 'PRIMA SCELTA','Transito completo, baseline buona, quota e Luna nei limiti',codes
 
 
 def analyze(raw,target,p,ground=None):
@@ -200,7 +239,7 @@ def analyze(raw,target,p,ground=None):
     illumination=(1+np.cos(phase))*50
     lunar_up=moon_horizontal.alt.deg>0
     visible=np.array([any(x<=t<=y for x,y in windows) for t in lunar_grid])
-    critical=bool(np.any(lunar_up & visible & (illumination>=p['moon_bright_percent']) & (sep<=p['moon_close_deg'])))
+    moon_up_observable=bool(np.any(lunar_up & visible))
     mi=int(np.argmin(abs(lunar_grid-m)))
     iso=lambda t: datetime.fromtimestamp(t,timezone.utc).isoformat(timespec='seconds')
     local=lambda t: datetime.fromtimestamp(t,zone).isoformat(timespec='seconds')
@@ -234,14 +273,30 @@ def analyze(raw,target,p,ground=None):
            depth_ppt=depth,moon_illumination_percent=float(illumination[mi]),
            moon_separation_deg=float(sep[mi]),moon_min_separation_deg=float(min(sep)),
            moon_altitude_mid_deg=float(moon_horizontal.alt.deg[mi]),moon_up_during_transit=bool(np.any(lunar_up)),
-           moon_critical=critical,uncertainty_minutes=unc,cycle=cycle,
-           timing_residual_seconds=residual,timing_check_failed=abs(residual)>2,
+           moon_up_during_observable=moon_up_observable,
+           uncertainty_minutes=unc,cycle=cycle,
+           timing_residual_seconds=residual,
+           timing_check_failed=abs(residual)>p['timing_residual_limit_seconds'],
            ttv=target.get('ttv',False),tapir_ground_percent=original,
            tapir_ground_recalculated_percent=raw_recalc,tapir_ground_delta_percentage_points=delta,
            tapir_anomaly=(original is not None and (not 0<=original<=100 or abs(delta)>2)),
            reference=target['comments'])
+    e['moon_risk']=moon_risk(e['moon_illumination_percent'],e['moon_min_separation_deg'],
+                             e['moon_altitude_mid_deg']>0 or e['moon_up_during_observable'])
+    pref=logistic_bounds(m,zone,p['session_pref_start'],p['session_end'])
+    if a>=pref[0] and b<=pref[1]:
+        e['logistics_class']='P1'
+    elif usable>0:
+        e['logistics_class']='P2'
+    else:
+        e['logistics_class']='P3'
+        e['logistics_note']='Evento fuori dalla normale serata: conservato nell\'archivio scientifico'
     e['tapir_discrepancy_reason']=('Ricalcolo indipendente degli intervalli a quota 0°, Sole <= soglia; '
                                  'TAPIR usa estremi e arrotondamenti diversi' if e['tapir_anomaly'] else '')
     e['score']=round(100*score(e,p),1)
-    e['category'],e['reason']=classify(e,p)
+    e['category'],e['reason'],e['reason_codes']=classify(e,p)
+    if e['logistics_class']=='P2': e['reason_codes']=e['reason_codes']+['LOGISTICS_PARTIAL']
+    elif e['logistics_class']=='P3': e['reason_codes']=e['reason_codes']+['LOGISTICS_OUT_OF_SESSION']
+    e['quality_class']=e['category']
+    e['downgrade_reason']=e['reason'] if e['category'] in ('ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO') else ''
     return e

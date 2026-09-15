@@ -105,6 +105,39 @@ def chromium_pdf(html_path,pdf_path):
 
 TAPIR_KEEP_COLUMNS={0,1,2,3,4,5,7}
 
+QUALITY_RANK={'PRIMA SCELTA':0,'ALTERNATIVE':1,'DA VALUTARE':2,'NON CONSIGLIATO':3}
+
+
+def compute_selection(events,p):
+    """Policy UAN v2.1: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
+    ordered by quality class then score, with temporal diversification of backups."""
+    by={}
+    for e in events:
+        if e.get('logistics_class')=='P1' and e['category']!='NON CONSIGLIATO':
+            e['mid_ts']=datetime.fromisoformat(e['mid_utc']).timestamp()
+            by.setdefault(e['name'],[]).append(e)
+    selection={}
+    for name,pool in by.items():
+        pool.sort(key=lambda e:(QUALITY_RANK[e['category']],-e.get('score',0),e['mid_utc']))
+        for rank,e in enumerate(pool,1): e['rank_within_target']=rank
+        picks=[pool[0]]
+        for role in ('BACKUP1','BACKUP2'):
+            got=None
+            for sep in (p['backup_preferred_separation_days'],p['backup_fallback_separation_days'],0):
+                for e in pool:
+                    if any(e is q for q in picks): continue
+                    if all(abs(e['mid_ts']-q['mid_ts'])>=sep*86400 for q in picks):
+                        got=e; break
+                if got: break
+            if got is None: break
+            picks.append(got)
+        roles=[('PRIMARY',picks[0])]
+        if len(picks)>1: roles.append(('BACKUP1',picks[1]))
+        if len(picks)>2: roles.append(('BACKUP2',picks[2]))
+        for role,e in roles: e['selection_role']=role
+        selection[name]=roles
+    return selection
+
 
 def _strip_hidden_columns(table):
     """Static equivalent of TAPIR's JS column visibility defaults."""
@@ -117,42 +150,22 @@ def _strip_hidden_columns(table):
     return re.sub(r'<tr[^>]*>.*?</tr>',fix_row,table,flags=re.S)
 
 
-def tapir_table_pdf(path,title,events,archive):
-    """Category PDF as original TAPIR tables (one bounded query per event), like the historic packet."""
-    frags=[];assets=''
-    for k,e in enumerate(events):
-        page=(archive/e['tapir_event_html']).read_text()
-        page=re.sub(r'<script.*?</script>','',page,flags=re.S|re.I)
-        page=re.sub(r'<p style="background:#fff2cf.*?</p>','',page,flags=re.S|re.I)
-        m=re.search(r'<table.*?</table>',page,flags=re.S|re.I)
-        if not m: return False
-        if k==0:
-            assets+=''.join(re.findall(r'<link[^>]*stylesheet[^>]*>',page,flags=re.I))
-            assets+=''.join(re.findall(r'<style.*?</style>',page,flags=re.S|re.I))
-            intro=''
-            for pat in (r'<p>Only 1 target matches.*?</p>',r'<h2>.*?</h2>',r'<h3>.*?</h3>'):
-                mm=re.search(pat,page,flags=re.S|re.I)
-                if mm: intro+=mm.group(0)
-        else:
-            intro=''
-        frags.append((intro,_strip_hidden_columns(m.group(0))))
-    names=sorted({e['name'] for e in events})
-    closing=' per prime.' if title=='PRIMA SCELTA' else ' come riserva o per valutazione.'
-    body=['<div class="coverbox"><h1>'+html.escape(title)+' - '+html.escape(', '.join(names))+'</h1>'
-          '<p><b>'+str(len(events))+' occasioni consigliate'+closing+'</b></p></div>',
-          '<p style="font-size:10px">Tabelle TAPIR originali, una query per evento. Percentuali TAPIR non validate: '
-          'le verifiche indipendenti sono in risultati.csv e nelle schede dell\'archivio. '
-          'Orari locali con offset e UTC; testo colorato = parte di transito in luce o sotto quota scelta.</p>']
-    for intro,frag in frags:
-        body.append('<div class="pb">'+intro+frag+'</div>')
-    doc=('<!doctype html><html lang="it"><meta charset="utf-8"><title>'+html.escape(title)+'</title>'
-         '<base href="'+BASE+'">'+assets
-         +'<style>@page{size:A4 landscape;margin:9mm}'
-         'body{font-family:"DejaVu Sans",sans-serif;font-size:11px}h1{font-size:17px;margin:2px 0}'
-         'h2{font-size:13px}h3{font-size:12px}.pb{page-break-after:always}'
-         '.coverbox{border:2px solid #000;padding:6px 10px;margin-bottom:8px}</style><body>'
-         +'\n'.join(body)+'</body></html>')
-    # Snap chromium cannot access /tmp: render inside a home-owned temp dir, then move.
+def _tapir_pieces(page):
+    """(stylesheet links, intro paragraphs, cleaned table) from one TAPIR HTML page."""
+    page=re.sub(r'<script.*?</script>','',page,flags=re.S|re.I)
+    page=re.sub(r'<p style="background:#fff2cf.*?</p>','',page,flags=re.S|re.I)
+    m=re.search(r'<table.*?</table>',page,flags=re.S|re.I)
+    if not m: return None
+    assets=''.join(re.findall(r'<link[^>]*stylesheet[^>]*>',page,flags=re.I))
+    assets+=''.join(re.findall(r'<style.*?</style>',page,flags=re.S|re.I))
+    intro=''
+    for pat in (r'<p>Only 1 target matches.*?</p>',r'<h2>.*?</h2>',r'<h3>.*?</h3>'):
+        mm=re.search(pat,page,flags=re.S|re.I)
+        if mm: intro+=mm.group(0)
+    return assets,intro,_strip_hidden_columns(m.group(0))
+
+
+def _chromium_render(doc,path):
     tmpd=Path(tempfile.mkdtemp(prefix='uan-render-',dir=Path.home()))
     try:
         tmp=tmpd/'render.html'
@@ -165,9 +178,41 @@ def tapir_table_pdf(path,title,events,archive):
     return ok
 
 
-def write_reports(out,events,targets,rejections,manifest):
+_HEAD=('<!doctype html><html lang="it"><meta charset="utf-8"><title>{title}</title>'
+       '<base href="'+BASE+'">{assets}<style>@page{{size:A4 landscape;margin:9mm}}'
+       'body{{font-family:"DejaVu Sans",sans-serif;font-size:11px}}h1{{font-size:17px;margin:2px 0}}'
+       'h2{{font-size:13px}}h3{{font-size:12px}}h2.tgthdr{{border-bottom:2px solid #123b50;padding-bottom:2px}}'
+       '.pb{{page-break-after:always}}.coverbox{{border:2px solid #000;padding:6px 10px;margin-bottom:8px}}'
+       '.rolehdr{{margin:6px 0 2px}}</style><body>{body}</body></html>')
+
+
+def selection_tapir_pdf(path,title,groups,archive,note):
+    """Selection PDF: one section per target with PRIMARY/BACKUP1/BACKUP2 TAPIR tables."""
+    assets='';intro='';body=[];first_fragment=True
+    for name,roles in groups:
+        body.append('<div class="pb"><h2 class="tgthdr">'+html.escape(name)+'</h2>')
+        for role,e in roles:
+            page=(archive/e['tapir_event_html']).read_text()
+            pieces=_tapir_pieces(page)
+            if pieces is None: return False
+            a,i,t=pieces
+            if first_fragment:
+                assets+=a;intro+=i;first_fragment=False
+            body.append(f'<p class="rolehdr"><b>{role}</b> — centro {html.escape(e["mid_local"][:16].replace("T"," "))}'
+                        f' (score {fmt(e.get("score"))}, {html.escape(e["category"])})</p>')
+            body.append(t)
+        body.append('</div>')
+    cover=('<div class="coverbox"><h1>'+html.escape(title)+'</h1>'
+           '<p><b>'+str(len(groups))+' target: selezione operativa PRIMARY + BACKUP1 + BACKUP2.</b></p></div>'
+           '<p style="font-size:10px">'+note+'</p>')
+    doc=_HEAD.format(title=title,assets=assets,body=cover+intro+'\n'.join(body))
+    return _chromium_render(doc,path)
+
+
+def write_reports(out,events,targets,rejections,manifest,selection=None):
     archive=out/'9_ARCHIVIO_COMPLETO';p=manifest['profile']
     events.sort(key=lambda e:(CATEGORIES.index(e['category']),e['mid_utc'],e['name']))
+    if selection is None: selection=compute_selection(events,p)
     target_map={t['name']:t for t in targets}
     with (archive/'risultati.csv').open('w',newline='',encoding='utf-8') as f:
         fields=[]
@@ -180,16 +225,27 @@ def write_reports(out,events,targets,rejections,manifest):
     (archive/'risultati.json').write_text(json.dumps(events,ensure_ascii=False,indent=2))
     (archive/'target_esclusi.json').write_text(json.dumps(rejections,ensure_ascii=False,indent=2))
     counts=Counter(e['category'] for e in events)
-    practical=Counter(e['category'] for e in events if e['practical'])
+    note=('Selezione policy UAN v2.1: PRIMARY + BACKUP1 + BACKUP2 per target (pool P1, diversificazione '
+          'temporale >= '+str(int(p['backup_preferred_separation_days']))+' giorni, fallback >= '
+          +str(int(p['backup_fallback_separation_days']))+'). Tabelle TAPIR originali, una query per evento; '
+          'percentuali TAPIR non validate: le verifiche indipendenti sono in risultati.csv e nell\'archivio. '
+          'Tutti gli altri eventi restano in 9_ARCHIVIO_COMPLETO.')
+    tiers={'PRIMA SCELTA':[],'ALTERNATIVE':[],'DA VALUTARE':[]}
+    for name,roles in selection.items():
+        primary=roles[0][1]
+        if primary['category'] in tiers: tiers[primary['category']].append((name,roles))
     for i,category in enumerate(CATEGORIES[:3],1):
-        evs=[e for e in events if e['category']==category and e['practical']]
+        groups=tiers[category]
         target=out/f'{i}_{category.replace(" ","_")}.pdf'
+        flat=[e for _,roles in groups for _,e in roles]
+        if not groups:
+            make_pdf(target,category,[],target_map,p); continue
         try:
-            if evs and all(e.get('tapir_event_html') for e in evs) and tapir_table_pdf(target,category,evs,archive):
+            if all(e.get('tapir_event_html') for e in flat) and selection_tapir_pdf(target,category,groups,archive,note):
                 continue
         except (OSError,KeyError):
             pass
-        make_pdf(target,category,evs,target_map,p)
+        make_pdf(target,category,flat,target_map,p)
     index=[]
     target_summaries=[]
     style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'
@@ -199,13 +255,12 @@ def write_reports(out,events,targets,rejections,manifest):
         c=SkyCoord(t['RA'],t['Dec'],unit=(u.hourangle,u.deg))
         hmax=90-abs(p['latitude']-c.dec.deg)
         best=min((CATEGORIES.index(e['category']) for e in group),default=None)
-        cands=[e for e in group if e['practical'] and e['category']!='NON CONSIGLIATO']
-        cands.sort(key=lambda e:(CATEGORIES.index(e['category']),-e.get('score',0),e['mid_utc']))
-        picks=[f"{e['mid_local'][:16].replace('T',' ')} ({e['category']}, score {fmt(e.get('score'))})" for e in cands[:3]]
+        roles=selection.get(name,[])
+        picks=[f"{e['mid_local'][:16].replace('T',' ')} ({e['category']}, score {fmt(e.get('score'))})" for _,e in roles]
         picks+=['']*(3-len(picks))
         target_summaries.append(dict(name=name,max_altitude_theoretical_deg=hmax,
             geometry_class=geometry_label(hmax,p),events=len(group),
-            practical_candidates=sum(e['practical'] and e['category']!='NON CONSIGLIATO' for e in group),
+            p1_candidates=sum(e.get('logistics_class')=='P1' and e['category']!='NON CONSIGLIATO' for e in group),
             best_astronomical_class=CATEGORIES[best] if best is not None else 'NESSUN EVENTO NEL PERIODO',
             primary=picks[0],backup1=picks[1],backup2=picks[2]))
         index.append(f'<li><a href="{slug(name)}/index.html">{html.escape(name)}</a> - {len(group)} eventi</li>')
@@ -228,13 +283,16 @@ def write_reports(out,events,targets,rejections,manifest):
     (archive/'riepilogo_target.json').write_text(json.dumps(target_summaries,indent=2,ensure_ascii=False))
     with (archive/'riepilogo_target.csv').open('w',newline='',encoding='utf-8') as f:
         w=csv.DictWriter(f,fieldnames=['name','max_altitude_theoretical_deg','geometry_class','events',
-                                       'practical_candidates','best_astronomical_class','primary','backup1','backup2'])
+                                       'p1_candidates','best_astronomical_class','primary','backup1','backup2'])
         w.writeheader();w.writerows(target_summaries)
     (archive/'index.html').write_text('<!doctype html><html lang="it"><meta charset="utf-8"><title>Archivio UAN</title>'+style+
                                      '<h1>Archivio completo</h1><ul>'+''.join(index)+'</ul><h2>Target esclusi</h2><pre>'+html.escape(json.dumps(rejections,indent=2,ensure_ascii=False))+'</pre></html>')
-    summary='\n'.join(f'{c}: {counts[c]} totali; {practical[c]} in fascia pratica' for c in CATEGORIES)
+    selection_counts=Counter(e['category'] for roles in selection.values() for _,e in roles)
+    summary='\n'.join(f'{c}: {counts[c]} totali; {selection_counts.get(c,0)} selezionati come PRIMARY/BACKUP' for c in CATEGORIES)
+    logistics_counts=Counter(e.get('logistics_class','P3?') for e in events)
+    log_summary='; '.join(f'{k}: {logistics_counts.get(k,0)}' for k in ('P1','P2','P3'))
     target_text='\n'.join(f'{t["name"]}: geometria {t["geometry_class"]} (quota teorica {t["max_altitude_theoretical_deg"]:.1f}°); '
-                          f'{t["practical_candidates"]} candidati pratici; PRIMARY {t["primary"] or "nessuno"}; '
+                          f'{t["p1_candidates"]} candidati operativi (P1); PRIMARY {t["primary"] or "nessuno"}; '
                           f'BACKUP1 {t["backup1"] or "nessuno"}; BACKUP2 {t["backup2"] or "nessuno"}' for t in target_summaries)
     readme=f'''UAN TRANSIT PLANNER v1
 Esecuzione UTC: {manifest['created_utc']}
@@ -242,16 +300,24 @@ Periodo dei centri di transito: {manifest['start']} incluso, {manifest['end_excl
 Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
 
 COME LEGGERE IL PACCHETTO
-1_PRIMA_SCELTA.pdf: occasioni che soddisfano le euristiche di qualità e gli orari.
-2_ALTERNATIVE.pdf: transiti completi con condizioni meno favorevoli.
-3_DA_VALUTARE.pdf: casi parziali, bassi, incerti o con baseline insufficiente.
-I PDF vuoti spiegano che non ci sono eventi nella categoria.
-9_ARCHIVIO_COMPLETO/index.html: tutti gli eventi, anche fuori orario e non consigliati.
-risultati.csv / risultati.json: metriche complete. target_esclusi.json: problemi per target.
+Classificazione completa di tutti gli eventi nell'archivio; i PDF mostrano solo
+la selezione operativa per target (policy UAN v2.1).
+1_PRIMA_SCELTA.pdf: per ogni target con almeno una PRIMA SCELTA operativa:
+PRIMARY + BACKUP1 + BACKUP2 come tabelle TAPIR originali.
+2_ALTERNATIVE.pdf: target il cui miglior evento operativo e' ALTERNATIVE: selezione per target.
+3_DA_VALUTARE.pdf: target con solo eventi da valutare: massimo 3 migliori con motivo esplicito.
+9_ARCHIVIO_COMPLETO/index.html: TUTTI gli eventi, anche fuori orario e non consigliati.
+risultati.csv / risultati.json: metriche e reason codes completi. target_esclusi.json: esclusioni.
+riepilogo_target.csv: geometria del sito, candidati operativi e selezione per target.
 Le schede HTML sono tabelle di eventi; le carte del campo e i grafici airmass sono link online.
 
 RISULTATI
 {summary}
+
+LOGISTICA
+{log_summary}
+P1: transito interamente fra {p['session_pref_start']} e le {p['session_end']}; P2: parzialmente
+nella serata operativa; P3: fuori normale serata (archivio scientifico, non nei PDF).
 
 PER TARGET
 {target_text}
@@ -321,36 +387,38 @@ Le quote min/max sono campionate, con ingresso/centro/uscita sempre inclusi.
 Rifrazione disattivata, orizzonte piano; ostacoli locali non modellati.
 La copertura è durata dell'intersezione / durata del transito. Non si tronca un 915%:
 si conserva il dato TAPIR e si usa il nuovo calcolo. Scarti >2 punti percentuali sono segnalati.
-Tolleranza transito completo: {p['complete_tolerance_seconds']} s mancanti.
+Eleggibilita' PRIMA SCELTA: copertura >= {p['first_choice_min_percent']:.1f}% (policy v2.1).
 Luna: metriche al centro, minimo della distanza campionato ogni <=10 minuti;
-penalità se contemporaneamente sopra orizzonte, nel transito visibile,
-illuminazione >= {p['moon_bright_percent']}% e distanza <= {p['moon_close_deg']}°.
-Una Luna brillante lontana non è automaticamente penalizzata.
+livelli di rischio BASSA/MODERATA/ALTA/ESTREMA (dettagli nella sezione POLICY).
 
-POLICY UAN TRANSIT PLANNER v1 (soglie configurabili nel profilo, nessuno score compensativo)
-Geometria teorica massima = 90 - abs(latitudine - declinazione J2000). Etichetta target:
-sotto {p['severe_altitude_deg']}° NON CONSIGLIATO DAL SITO; fino a {p['visibility_altitude_deg']}° MOLTO DIFFICILE;
-fino a {p['preferred_altitude_deg']}° MARGINALE; fino a {p['excellent_altitude_deg']}° BUONO; oltre MOLTO FAVOREVOLE.
-L'etichetta descrive il target, non l'evento: 25° restano 25° reali anche se sono il massimo possibile.
-Evento: copertura transito <{p['transit_operational_percent']:.0f}% -> non operativo (DA VALUTARE);
-90-99% valido (ALTERNATIVE); 100% (tolleranza {p['complete_tolerance_seconds']} s) ideale.
-Baseline osservabile per lato, denominatore = finestra richiesta (1 h + 1 sigma): <{p['baseline_weak_percent']:.0f}% debole
-(DA VALUTARE); {p['baseline_weak_percent']:.0f}-{p['baseline_good_percent']:.0f}% accettabile (ALTERNATIVE); >= {p['baseline_good_percent']:.0f}% buona.
-Centro transito sotto {p['preferred_altitude_deg']}°: DA VALUTARE. Le quote sono assolute, mai relative al massimo del target.
-Dati mancanti, TTV, errore centro > {p['maximum_uncertainty_minutes']} min, residuo temporale > 2 s: DA VALUTARE.
-Luna: penalita' solo nella zona critica (illuminazione >= {p['moon_bright_percent']:.0f}%, distanza <= {p['moon_close_deg']:.0f}°,
-sopra orizzonte durante il transito osservabile); una Luna brillante ma lontana non scarta l'evento.
-PRIMA SCELTA: transito completo, baseline >= {p['baseline_good_percent']:.0f}% per lato, tutto sopra {p['preferred_altitude_deg']}°, Luna ed errori nei limiti.
-NON CONSIGLIATO: collo di bottiglia strutturale (geometria target) o evento senza transito utile al buio.
-Magnitudine e profondità sono esposte, senza inventare una sensibilità dello strumento.
-
-SCORE SECONDARIO 0-100 (solo ordinamento interno, mai sopra le classi):
-30% copertura transito + 15% baseline (minimo per lato) + 20% quota centro (saturazione a {p['excellent_altitude_deg']:.0f}°)
-+ 10% Luna (penalita' continua: (illuminazione/100)*(1-distanza/180); Luna sotto orizzonte = nessuna penalita')
-+ 10% magnitudine (V/G da 8 a 16) + 10% profondità (saturazione a 20 ppt) + 5% praticità oraria.
-Valori mancanti di magnitudine/profondità: 0,5 neutro, nessun credito inventato.
-PRIMARY, BACKUP1, BACKUP2: per ogni target i primi tre eventi pratici ordinati per classe
-(operativa prima) e poi per score decrescente; indicati in riepilogo_target.csv e nel LEGGIMI.
+POLICY UAN TRANSIT PLANNER v2.1 (gerarchia rigida; uno score alto non compensa livelli superiori)
+1. Integrita' temporale: TTV, residuo BJD > {p['timing_residual_limit_seconds']:.0f} s o errore centro > {p['maximum_uncertainty_minutes']:.0f} min -> DA VALUTARE.
+2. Geometria del target dal sito: quota teorica < {p['severe_altitude_deg']}° -> NON CONSIGLIATO DAL SITO
+   ({p['severe_altitude_deg']}-{p['visibility_altitude_deg']}° MOLTO DIFFICILE, {p['visibility_altitude_deg']}-{p['preferred_altitude_deg']}° MARGINALE,
+   {p['preferred_altitude_deg']}-{p['excellent_altitude_deg']}° BUONO, >= {p['excellent_altitude_deg']}° MOLTO FAVOREVOLE).
+3. Copertura transito (ricalcolata indipendentemente, mai la percentuale TAPIR alla cieca):
+   < {p['transit_operational_percent']:.0f}% -> DA VALUTARE; {p['transit_operational_percent']:.0f}-{p['first_choice_min_percent']:.1f}% -> max ALTERNATIVE; >= {p['first_choice_min_percent']:.1f}% -> eleggibile PRIMA SCELTA.
+4. Baseline per lato (denominatore = finestra richiesta, 1 h + 1 sigma): < {p['baseline_weak_percent']:.0f}% su un lato -> DA VALUTARE;
+   {p['baseline_weak_percent']:.0f}-{p['baseline_good_percent']:.0f}% -> max ALTERNATIVE; >= {p['baseline_good_percent']:.0f}% entrambi -> eleggibile PRIMA SCELTA.
+5. Quota evento (assoluta, mai relativa al massimo del target): centro < {p['preferred_altitude_deg']}° -> DA VALUTARE;
+   centro >= {p['preferred_altitude_deg']}° con minimo < {p['preferred_altitude_deg']}° -> max ALTERNATIVE; tutto >= {p['preferred_altitude_deg']}° -> eleggibile PRIMA SCELTA.
+6. Effemeride: vedi fase 1 (TTV o sigma > 10 min -> DA VALUTARE).
+7. Luna (solo se sopra l'orizzonte; sotto orizzonte = BASSA):
+   ESTREMA -> DA VALUTARE: illum >=90% & sep <40°, oppure >=70% & sep <20°, oppure >=40% & sep <10°;
+   ALTA -> max ALTERNATIVE: illum >=80% & sep <60°, oppure >=50% & sep <40°, oppure >=20% & sep <20°;
+   MODERATA -> max ALTERNATIVE: illum >70% & sep <=100°, oppure >=50% & sep <=70°, oppure >=20% & sep <=40°;
+   BASSA: nessuna penalita'. La distanza puo' essere piu' grave della fase lunare.
+8. Logistica separata dalla qualita' (logistics_class): P1 transito interamente fra
+   {p['session_pref_start']} e {p['session_end']}; P2 parzialmente in serata; P3 fuori normale serata (archivio scientifico).
+   La baseline post-transito puo' terminare dopo il limite del transito.
+9. Score secondario (solo ordinamento dentro la stessa classe): 30% copertura transito + 20% baseline minima
+   + 20% quota centro (saturazione a {p['excellent_altitude_deg']}°) + 15% Luna (penalita' continua illum/100*exp(-sep/45))
+   + 10% affidabilita' temporale + 5% comodita' oraria. Magnitudine e profondità sono esposte ma NON
+   entrano nello score finche' non esiste un profilo reale di telescopio/camera (saturazione, rumore).
+Ogni evento porta reason_codes auditabili (es. MOON_HIGH, ALTITUDE_MID_LOW, TARGET_GEOMETRY_MARGINALE).
+SELEZIONE (presentation): PRIMARY + BACKUP1 + BACKUP2 per target dal pool operativo P1, ordinati per
+classe poi score, con diversificazione temporale: separazione preferita >= {p['backup_preferred_separation_days']:.0f} giorni,
+fallback >= {p['backup_fallback_separation_days']:.0f}. I PDF mostrano solo la selezione; tutto il resto resta nell'archivio.
 
 LIMITI COMPUTAZIONALI
 Per errori molto grandi la finestra calcolata per lato è limitata a min(P/2, 24 ore),
@@ -366,4 +434,4 @@ Gli hash SHA256 dei file originali sono nel manifest finale.
 Comando riproducibile: {manifest['command']}
 '''
     (archive/'NOTE_SELEZIONE.txt').write_text(notes)
-    return dict(counts),dict(practical)
+    return dict(counts),dict(selection_counts)

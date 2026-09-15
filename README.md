@@ -47,14 +47,20 @@ Coordinate verificate: [INAF](https://www.oacn.inaf.it/come-raggiungerci/).
 - Copertura: Sole <= -12°, altezza >=20°.
 - Qualità desiderata: 30°; quota grave: 15°.
 - Baseline: un'ora per lato + errore del centro (1 sigma quando noto).
-- Per classi favorevoli: almeno 30 minuti osservabili per lato; errore centro <=10 minuti.
-- Luna critica: contemporaneamente >=70% illuminata, <=40° dal target e sopra l'orizzonte
-  durante la parte osservabile. Altrimenti non viene automaticamente penalizzata.
-- Transito completo: al massimo un secondo mancante.
+- Errore centro >10 minuti o TTV: da valutare.
+- **Policy v2.1 — Luna a quattro livelli** (solo se sopra l'orizzonte):
+  ESTREMA (es. >=90% a <40°, o >=40% a <10°) → DA VALUTARE; ALTA e MODERATA →
+  max ALTERNATIVE; BASSA → nessuna penalità. La distanza può pesare più della fase.
+- Copertura transito: <90% → DA VALUTARE; 90-99.5% → max ALTERNATIVE; >=99.5% →
+  eleggibile PRIMA SCELTA. Baseline per lato: <50% debole, 50-80% accettabile, >=80% buona.
 - Orari pratici: crepuscolo nautico reale fino alle 01:00; la baseline può finire dopo.
+  Logistica separata dalla qualità: P1 transito intero fra 17:45 e 01:00, P2 parziale, P3 fuori serata.
+- Score secondario 0-100 (30% copertura, 20% baseline, 20% quota, 15% Luna, 10% affidabilità
+  temporale, 5% orario): ordina solo dentro la stessa classe; magnitudine e profondità non entrano.
 - Le soglie sono **euristiche configurabili, non regole ufficiali UAN**.
-- I PDF espongono la baseline pratica; l’archivio conserva anche quella astronomica.
-- `riepilogo_target.csv`/`.json` riportano quota teorica e conteggi anche senza eventi.
+- I PDF mostrano solo la **selezione per target** (PRIMARY + BACKUP1 + BACKUP2, con
+  diversificazione temporale >=7 giorni, fallback >=3); tutto il resto resta in archivio.
+- `riepilogo_target.csv`/`.json` riportano geometria del sito, candidati P1 e selezione.
 
 Gli orari ISO includono l'offset stagionale. La notte è identificata dal mezzogiorno locale
 precedente. Se si imposta un limite in un'ora autunnale ripetuta, si usa la seconda
@@ -69,11 +75,12 @@ il programma non garantisce misurabilità di una data profondità.
 ## Cosa aprire
 
 1. `0_LEGGIMI.txt`: sintesi e istruzioni.
-2. `1_PRIMA_SCELTA.pdf`, `2_ALTERNATIVE.pdf`, `3_DA_VALUTARE.pdf`: eventi in fascia pratica,
-   presentati come **tabelle TAPIR originali** (una query TAPIR per evento, come nel
-   pacchetto storico): orari locali/UTC, magnitudine, Luna, BJD_TDB, diagramma del
-   transito e link a finding chart/airmass. Le intestazioni sono una sintesi locale;
-   le percentuali TAPIR restano non validate (vedi sotto).
+2. `1_PRIMA_SCELTA.pdf`, `2_ALTERNATIVE.pdf`, `3_DA_VALUTARE.pdf`: **selezione operativa
+   per target** come tabelle TAPIR originali (una query per evento): PRIMA SCELTA =
+   target con primary di prima scelta (PRIMARY + BACKUP1 + BACKUP2); ALTERNATIVE =
+   target il cui miglior evento è alternativo; DA VALUTARE = i rimanenti, con motivo.
+   Orari locali/UTC, magnitudine, Luna, BJD_TDB, diagramma del transito e link online.
+   Le percentuali TAPIR restano non validate (vedi sotto).
 3. `9_ARCHIVIO_COMPLETO/index.html`: tutti gli eventi per target, inclusi fuori orario
    e non consigliati; tabelle originali TAPIR e link alle carte del campo/airmass online.
 4. `risultati.csv`/`risultati.json`: metriche; `NOTE_SELEZIONE.txt`: metodo e limiti;
