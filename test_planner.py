@@ -53,7 +53,7 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(geometry_label(10,p),'NON CONSIGLIATO DAL SITO')
         self.assertEqual(geometry_label(18,p),'MOLTO DIFFICILE')
         self.assertEqual(geometry_label(25,p),'MARGINALE')
-        self.assertEqual(geometry_label(42,p),'BUONO')
+        self.assertEqual(geometry_label(35,p),'BUONO')
         self.assertEqual(geometry_label(55,p),'MOLTO FAVOREVOLE')
 
 
