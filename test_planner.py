@@ -71,6 +71,31 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(geometry_label(35,p),'BUONO')
         self.assertEqual(geometry_label(55,p),'MOLTO FAVOREVOLE')
 
+    def test_v21_classification_boundaries(self):
+        p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
+           'visibility_altitude_deg':20,'transit_operational_percent':90,'first_choice_min_percent':99.5,
+           'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
+           'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
+           'timing_residual_limit_seconds':2}
+        base=dict(max_altitude_theoretical_deg=55,altitude_min_deg=31,altitude_mid_deg=40,
+                  altitude_max_deg=45,transit_percent=100,duration_minutes=120,
+                  baseline_before_percent=100,baseline_after_percent=100,
+                  practical_transit_percent=100,uncertainty_minutes=1,
+                  moon_risk='BASSA',magnitude=11,depth_ppt=12,ttv=False,
+                  moon_up_during_observable=False,moon_illumination_percent=5,moon_separation_deg=120,
+                  timing_check_failed=False)
+        c=lambda **kw: classify(dict(base,**kw),p)[0]
+        self.assertEqual(c(transit_percent=89.9),'DA VALUTARE')
+        self.assertEqual(c(transit_percent=95),'ALTERNATIVE')
+        self.assertEqual(c(transit_percent=99.5),'PRIMA SCELTA')
+        self.assertEqual(c(baseline_after_percent=49.9),'DA VALUTARE')
+        self.assertEqual(c(baseline_after_percent=60),'ALTERNATIVE')
+        self.assertEqual(c(baseline_after_percent=80),'PRIMA SCELTA')
+        self.assertEqual(c(altitude_mid_deg=29.9),'DA VALUTARE')
+        self.assertEqual(c(altitude_mid_deg=35,altitude_min_deg=29),'ALTERNATIVE')
+        self.assertEqual(c(altitude_mid_deg=35,altitude_min_deg=30),'PRIMA SCELTA')
+        self.assertEqual(c(moon_risk='ALTA'),'ALTERNATIVE')
+
 
 
 class InputChecks(unittest.TestCase):
@@ -131,6 +156,40 @@ class ReportChecks(unittest.TestCase):
             self.assertEqual(len(list(out.glob('*.pdf'))),3)
 
 class SelectionChecks(unittest.TestCase):
+    def setUp(self):
+        from reports import compute_selection
+        from datetime import datetime,timezone,timedelta
+        self.p=dict(backup_preferred_separation_days=7,backup_fallback_separation_days=3)
+        self.base=datetime(2026,11,1,22,0,tzinfo=timezone.utc)
+        self.compute_selection=compute_selection
+        self.timedelta=timedelta
+    def ev(self,cycle,days,score,cat='PRIMA SCELTA'):
+        mid=self.base+self.timedelta(days=days)
+        return dict(name='X b',mid_utc=mid.isoformat(),mid_local=mid.isoformat(),category=cat,
+                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1')
+    def roles(self,events):
+        sel=self.compute_selection(events,self.p)['X b']
+        return [(r,e['cycle'],e['category']) for r,e in sel]
+    def test_quality_dominates_separation(self):
+        # A) PRIMA a +4 giorni DEVE battere ALTERNATIVE a +20.
+        r=self.roles([self.ev(1,0,95),self.ev(2,4,94),self.ev(3,20,93,'ALTERNATIVE')])
+        self.assertEqual(r,[('PRIMARY',1,'PRIMA SCELTA'),('BACKUP1',2,'PRIMA SCELTA'),
+                            ('BACKUP2',3,'ALTERNATIVE')])
+        # B) Nessun'altra PRIMA: il backup puo' essere ALTERNATIVE.
+        r=self.roles([self.ev(1,0,95),self.ev(2,10,80,'ALTERNATIVE')])
+        self.assertEqual(r,[('PRIMARY',1,'PRIMA SCELTA'),('BACKUP1',2,'ALTERNATIVE')])
+        # C) Due PRIMA ben separate: vince lo score migliore.
+        r=self.roles([self.ev(1,0,95),self.ev(2,8,94),self.ev(3,20,93)])
+        self.assertEqual(r,[('PRIMARY',1,'PRIMA SCELTA'),('BACKUP1',2,'PRIMA SCELTA'),
+                            ('BACKUP2',3,'PRIMA SCELTA')])
+        # D) BACKUP2 rispetta la separazione anche da BACKUP1 (fallback >=3 dentro la classe,
+        #    poi classe inferiore, mai un candidato troppo ravvicinato se esistono alternative).
+        r=self.roles([self.ev(1,0,95),self.ev(2,8,94),self.ev(3,9,93.9),self.ev(4,20,93)])
+        self.assertEqual(r,[('PRIMARY',1,'PRIMA SCELTA'),('BACKUP1',2,'PRIMA SCELTA'),
+                            ('BACKUP2',4,'PRIMA SCELTA')])
+        r=self.roles([self.ev(1,0,95),self.ev(2,8,94),self.ev(3,9,93.9)])
+        self.assertEqual(r,[('PRIMARY',1,'PRIMA SCELTA'),('BACKUP1',2,'PRIMA SCELTA'),
+                            ('BACKUP2',3,'PRIMA SCELTA')])
     def test_selection_diversifies_backups(self):
         from reports import compute_selection
         from datetime import datetime,timezone,timedelta

@@ -319,10 +319,15 @@ def main(argv=None):
     out=(args.output or Path.home()/'Downloads'/('GaetanoTrovato_'+created.strftime('%Y%m%d_%H%M%S_%f'))).expanduser().resolve()
     out.mkdir(parents=True,exist_ok=False)
     archive=out/'9_ARCHIVIO_COMPLETO';raw=archive/'dati_originali';raw.mkdir(parents=True)
-    manifest=dict(created_utc=created.isoformat(),start=str(start),end_exclusive=str(end),profile=p,
+    manifest=dict(created_utc=created.isoformat(),generated_at=created.isoformat(),
+                  policy_version=p.get('policy_version','2.1'),start=str(start),end_exclusive=str(end),profile=p,
                   command=shlex.join([str(ROOT/'uan-transits'),*(argv or sys.argv[1:])]),requested=args.names,
                   versions={x:importlib.metadata.version(x) for x in ['astropy','astropy-iers-data','numpy','reportlab']},
                   python=sys.version,status='running',filters={'max_v':args.max_v,'min_depth_ppt':args.min_depth})
+    try:
+        manifest['git_commit']=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip()
+    except (subprocess.SubprocessError,OSError):
+        manifest['git_commit']=None
     dump(archive/'manifest.json',manifest);dump(raw/'profile.json',p)
     warnfile=(raw/'warnings.log').open('w')
     warnings.showwarning=lambda message,category,filename,lineno,file=None,line=None: (warnfile.write(f'{category.__name__}: {message}\n'),warnfile.flush())
@@ -394,6 +399,8 @@ def main(argv=None):
                     log(f'  ATTENZIONE: tabella TAPIR non generata per {tname} ciclo {e["cycle"]}: {exc}')
         log('Generazione PDF, HTML e archivio...')
         manifest['counts'],manifest['selection_counts']=write_reports(out,events,targets,rejected,manifest,selection)
+        from collections import Counter
+        manifest['logistics_counts']=dict(Counter(e.get('logistics_class') for e in events))
         manifest['event_count']=len(events);manifest['excluded_targets']=rejected
         manifest['anomalies']=sum(e['tapir_anomaly'] for e in events)
         manifest['max_timing_residual_seconds']=max((abs(e['timing_residual_seconds']) for e in events),default=None)

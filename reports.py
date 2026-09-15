@@ -122,13 +122,20 @@ def compute_selection(events,p):
         for rank,e in enumerate(pool,1): e['rank_within_target']=rank
         picks=[pool[0]]
         for role in ('BACKUP1','BACKUP2'):
+            remaining=[e for e in pool if not any(e is q for q in picks)]
             got=None
-            for sep in (p['backup_preferred_separation_days'],p['backup_fallback_separation_days'],0):
-                for e in pool:
-                    if any(e is q for q in picks): continue
-                    if all(abs(e['mid_ts']-q['mid_ts'])>=sep*86400 for q in picks):
-                        got=e; break
-                if got: break
+            if remaining:
+                # Quality dominates separation: best class first; within a class
+                # prefer >= preferred separation, then >= fallback, then next class.
+                for cat in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
+                    cls=[e for e in remaining if e['category']==cat]
+                    if not cls: continue
+                    for sep in (p['backup_preferred_separation_days'],p['backup_fallback_separation_days']):
+                        got=next((e for e in cls if all(abs(e['mid_ts']-q['mid_ts'])>=sep*86400 for q in picks)),None)
+                        if got: break
+                    if got: break
+                if got is None:
+                    got=remaining[0]
             if got is None: break
             picks.append(got)
         roles=[('PRIMARY',picks[0])]
@@ -294,7 +301,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     target_text='\n'.join(f'{t["name"]}: geometria {t["geometry_class"]} (quota teorica {t["max_altitude_theoretical_deg"]:.1f}°); '
                           f'{t["p1_candidates"]} candidati operativi (P1); PRIMARY {t["primary"] or "nessuno"}; '
                           f'BACKUP1 {t["backup1"] or "nessuno"}; BACKUP2 {t["backup2"] or "nessuno"}' for t in target_summaries)
-    readme=f'''UAN TRANSIT PLANNER v1
+    readme=f'''UAN TRANSIT PLANNER - policy UAN v{p.get('policy_version','2.1')}
 Esecuzione UTC: {manifest['created_utc']}
 Periodo dei centri di transito: {manifest['start']} incluso, {manifest['end_exclusive']} escluso, in {p['timezone']}.
 Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).

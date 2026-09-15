@@ -112,6 +112,23 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
 - Fix durante l'implementazione: intro TAPIR ripetute nel PDF di selezione (ora solo
   una); `tapir_anomaly` persa nel refactor (ripristinata, 14 anomalie ancora tracciate).
 
+# Audit v2.1 (16 settembre 2026, sessione di verifica)
+
+- Bug reale trovato e corretto nella selezione: la separazione temporale prevaleva
+  sulla quality_class (PRIMA a +4 gg perdeva contro ALTERNATIVE a +20). Ora la classe
+  migliore viene cercata prima, poi separazione >=7 giorni, poi >=3, poi classe inferiore.
+  7 selezioni dell'archivio annuale corrette; 14/14 test inclusi i casi A-D sintetici.
+- Provenance: manifest ora con policy_version, git_commit, generated_at, logistics_counts;
+  0_LEGGIMI dichiara la policy; planner_source dell'archivio annuale aggiornato al codice
+  v2.1 realmente usato (era rimasto lo snapshot v1).
+- Hard-constraint audit automatico su 13264 eventi: nessuna PRIMA SCELTA viola i requisiti
+  (copertura >=99.5, baseline >=80, quota >=30, Luna BASSA); nessuna ALTERNATIVE contiene
+  trigger DA VALUTARE; ogni DA VALUTARE ha reason_code giustificativo. PASS.
+- Falso allarme documentato: TrES-3 b e Qatar-1 b con score 99.9 restano DA VALUTARE
+  per TTV (corretto: lo score non promuove mai).
+- Suite 14/14 con exit code reale; smoke end-to-end WASP-77 A b + verify_output PASS;
+  verify_output sull'archivio annuale PASS; git diff --check OK.
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello
