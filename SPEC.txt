@@ -1,0 +1,226 @@
+Realizza UAN Transit Planner v1: uno strumento locale da terminale che, ricevuti uno o più esopianeti, aggiorni i dati, calcoli i transiti osservabili, ne valuti la qualità e produca un pacchetto consultabile di HTML, PDF e dati.
+
+Lo scopo è rendere ripetibile una procedura già svolta manualmente, evitando ogni volta ore di selezione e impaginazione.
+
+SCELTA GIÀ FATTA
+Voglio l’opzione 1: CLI locale semplice su Kubuntu.
+Non serve un’interfaccia web.
+Procedi con ispezione, implementazione e verifica; non fermarti a proporre un’architettura o a chiedermi nuovamente quale interfaccia preferisco.
+
+1. PARTI DAL LAVORO ESISTENTE
+
+Controlla ~/Downloads/Tapir e gli script, cataloghi e risultati già presenti.
+Il percorso è atteso, ma devi verificarne esistenza e stato.
+
+Riutilizza quanto funziona: TAPIR, conversione del catalogo NASA, generazione HTML/PDF e organizzazione degli output.
+Prima di riscrivere funzionalità, consulta il repository ufficiale:
+https://github.com/elnjensen/Tapir
+
+Verifica interfacce e formati sulle fonti ufficiali aggiornate.
+Non presumere che i vecchi script o le conclusioni della conversazione siano tutti corretti.
+Non sovrascrivere gli archivi precedenti.
+
+Usa Python per il coordinamento se adatto, mantenendo TAPIR come motore astronomico. Preferisci librerie già disponibili e il minimo codice necessario.
+
+2. UTILIZZO
+
+Supporta comandi equivalenti a:
+
+uan-transits plan "WASP-77 A b" "CoRoT-11 b"
+
+uan-transits plan \
+  --targets targets.txt \
+  --site capodimonte \
+  --start 2026-09-14 \
+  --days 365
+
+Predefiniti:
+- data iniziale: oggi;
+- durata: 365 giorni;
+- sito: Capodimonte;
+- output: nuova cartella identificabile per data di esecuzione.
+
+Accetta nomi da CLI oppure da file, risolvi gli alias verificabili, elimina i duplicati e segnala nomi mancanti o ambigui senza scegliere arbitrariamente un pianeta.
+
+Il programma deve funzionare con target generici, senza regole basate sul loro nome.
+
+3. PROFILO OSSERVATIVO
+
+Salva un piccolo profilo modificabile con questi valori iniziali, ricavati dal lavoro precedente:
+
+- sito: Capodimonte;
+- latitudine: 40.862861° N;
+- longitudine: 14.255056° E;
+- quota: 150 m;
+- fuso: Europe/Rome, con gestione automatica dell’ora legale;
+- notte: Sole a quota ≤ −12°;
+- baseline desiderata: 1 ora prima e 1 ora dopo;
+- estensione per incertezza delle effemeridi: attiva.
+
+Verifica le coordinate su una fonte ufficiale e documenta eventuali differenze.
+
+Distingui due modalità logistiche:
+- predefinita: disponibilità dall’inizio della notte nautica, fine del transito entro le 01:00 locali;
+- fascia fissa configurabile: per esempio 17:45–01:00, come nel lavoro storico, sempre intersecata con il buio reale.
+
+Le 01:00 indicano la notte osservativa successiva alla sera di inizio.
+La baseline post-transito può terminare dopo le 01:00: mostrala esplicitamente.
+Non applicare offset UTC fissi e non confondere la fine del transito con quella della sessione.
+
+4. DATI E RICERCA
+
+Aggiorna le effemeridi dal NASA Exoplanet Archive e produci il formato richiesto dalla versione locale di TAPIR.
+
+Conserva:
+- fonte e data di acquisizione;
+- catalogo effettivamente utilizzato;
+- riferimenti disponibili delle effemeridi;
+- versione o commit di TAPIR;
+- parametri della ricerca.
+
+Mantieni coerenti periodo, epoca, durata, unità e sistema temporale.
+Non mescolare BJD_TDB, JD_UTC e orari civili senza le conversioni appropriate.
+
+Se l’aggiornamento fallisce, segnala il problema. Un catalogo in cache deve essere chiaramente identificato come tale, con la sua data.
+
+La ricerca iniziale deve essere ampia:
+non eliminare preventivamente i target perché non raggiungono 30°, sono deboli o hanno transiti poco profondi.
+Eventuali limiti su magnitudine e profondità devono essere espliciti e configurabili.
+
+5. METRICHE
+
+Per ogni target calcola la massima altezza teorica dal sito.
+
+Per ogni evento riporta:
+- ingresso, centro e uscita, in UTC e ora locale con date complete;
+- durata;
+- altezza a ingresso, centro e uscita;
+- altezza minima e massima durante il transito;
+- copertura osservabile del transito;
+- minuti e percentuali di baseline prima e dopo, separatamente;
+- finestra osservabile e limiti dovuti a notte e altezza;
+- magnitudine con banda dichiarata;
+- profondità con unità esplicite;
+- illuminazione lunare e distanza angolare dal target;
+- presenza della Luna sopra l’orizzonte;
+- incertezza delle effemeridi, quando disponibile;
+- compatibilità con gli orari pratici.
+
+Definisci sempre il denominatore delle percentuali.
+Distingui copertura astronomica e copertura entro la disponibilità logistica.
+Rendi esplicita la soglia di altezza usata per calcolare la copertura.
+
+6. VALIDAZIONE DEI RISULTATI
+
+Non fidarti ciecamente delle percentuali di TAPIR.
+
+Nel lavoro precedente un evento di CoRoT-11 b riportava 915%:
+il successivo controllo temporale indicava circa 45,3%.
+Non correggere dividendo per dieci e non limitarti a troncare a 100%.
+
+Ricalcola la copertura attraverso l’intersezione fra intervallo del transito e intervalli realmente osservabili.
+Conserva valore originale, valore ricalcolato e motivo della discrepanza.
+
+Controlla anche:
+- percentuali fuori da 0–100%;
+- durate o periodi non validi;
+- date incoerenti;
+- valori mancanti;
+- eventi duplicati;
+- attraversamento di mezzanotte e cambio dell’ora legale.
+
+I dati mancanti non devono diventare automaticamente zero o condizioni favorevoli.
+
+Confrontare TAPIR locale e TAPIR web verifica la riproducibilità, ma non costituisce una verifica astronomica indipendente. Per un piccolo campione usa, dove praticabile, un calcolo indipendente con strumenti astronomici affidabili.
+
+7. CLASSIFICAZIONE SPIEGABILE
+
+Usa una gerarchia decisionale, senza un punteggio unico che compensi problemi gravi con caratteristiche favorevoli.
+
+Tieni distinti:
+A. geometria strutturale del target dal sito;
+B. qualità astronomica del singolo evento;
+C. comodità logistica.
+
+Categorie operative:
+
+PRIMA SCELTA
+Transito completo, idealmente tutto a quota ≥30°, con baseline, Luna ed effemeridi valutate esplicitamente.
+
+ALTERNATIVE
+Transito completo e centro ≥30°, ma una parte sotto 30° oppure altre condizioni meno favorevoli.
+
+DA VALUTARE
+Eventi parziali, centro basso, baseline insufficiente, dati incerti o migliori occasioni di target che culminano sotto 30°.
+
+NON CONSIGLIATO
+Condizioni gravemente sfavorevoli, con motivo dichiarato.
+Distingui “target sfavorevole da questo sito” da “singolo evento sfavorevole”.
+
+La soglia di 30° esprime qualità assoluta:
+25° non diventa ottimo perché è il massimo raggiungibile dal target.
+
+Non imporre come protocollo ufficiale le vecchie soglie 90% di transito / 50% di baseline: erano tentativi intermedi.
+Definisci le soglie operative necessarie in un punto solo, documentale come euristiche modificabili e rendi esplicita la tolleranza numerica per “transito completo”.
+
+Valuta la Luna combinando illuminazione, distanza e altezza sull’orizzonte.
+Non scartare automaticamente una Luna luminosa ma lontana.
+Non inventare precisioni fotometriche senza dati della strumentazione.
+
+Un evento astronomicamente eccellente fuori orario deve restare riconoscibile come tale nell’archivio, pur non comparendo fra le proposte pratiche.
+
+Ogni classificazione deve avere una breve motivazione basata sulle metriche.
+Queste categorie sono organizzative, non categorie native TAPIR né un protocollo ufficiale UAN.
+
+8. CONSEGNA
+
+Produci una struttura semplice:
+
+GaetanoTrovato_<data-esecuzione>/
+├── 0_LEGGIMI.txt
+├── 1_PRIMA_SCELTA.pdf
+├── 2_ALTERNATIVE.pdf
+├── 3_DA_VALUTARE.pdf
+└── 9_ARCHIVIO_COMPLETO/
+    ├── NOTE_SELEZIONE.txt
+    ├── risultati.csv
+    ├── dati_originali/
+    └── finding e HTML organizzati per target
+
+Genera anche lo ZIP finale.
+
+Nei PDF principali includi gli eventi compatibili con la disponibilità pratica.
+Nell’archivio conserva anche risultati fuori orario, esclusioni e relative motivazioni.
+
+Mantieni la leggibilità delle tabelle TAPIR e i collegamenti a finding chart e airmass plot.
+Non confondere la tabella degli eventi con la carta del campo stellare.
+Dichiara quando un PDF è un’aggregazione locale di risultati TAPIR.
+Evita intestazioni o conteggi ereditati che descrivano erroneamente una singola query.
+
+Il LEGGIMI deve spiegare come usare il pacchetto.
+Le NOTE devono permettere di ricostruire, anche fra dieci anni, dati, parametri, metodo, anomalie, limiti ed esclusioni.
+Specifica che per osservazioni future occorre aggiornare le effemeridi.
+
+Gestisci chiaramente categorie vuote e target senza eventi utili.
+
+9. VERIFICA E COMPLETAMENTO
+
+Usa come esempio iniziale:
+WASP-142 b, CoRoT-11 b, WASP-121 b, WASP-77 A b, WASP-4 b.
+
+Nel lavoro storico comparivano 260 eventi grezzi, 30 finding e 16 eventi nella fascia pratica: sono risultati storici, non quantità da riprodurre artificialmente.
+
+Verifica anche un target diverso per dimostrare che la logica è generale.
+
+Lascia controlli automatici essenziali per copertura, mezzanotte, ora legale, dati mancanti e separazione fra geometria del target e qualità dell’evento.
+Esegui una prova completa e controlla la leggibilità dei PDF.
+
+Alla fine consegna:
+- programma funzionante;
+- profilo del sito;
+- comando esatto per usarlo;
+- pacchetto di esempio;
+- breve riepilogo delle verifiche e degli eventuali limiti rimasti.
+
+Mantieni la soluzione piccola: niente interfaccia web, database, framework o astrazioni per esigenze future.
+Non promettere tempi di esecuzione: misura quelli effettivi.

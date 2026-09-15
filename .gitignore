@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.zip
+verification/
+smoke-output*/
+extra-target/
+GaetanoTrovato_*/
+.env
+.env.*

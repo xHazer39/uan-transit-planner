@@ -1,0 +1,3 @@
+#!/bin/sh
+planner_dir=$(dirname -- "$(readlink -f -- "$0")")
+exec "$planner_dir/.venv/bin/python" "$planner_dir/planner.py" "$@"

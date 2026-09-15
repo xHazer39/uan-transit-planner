@@ -1,0 +1,256 @@
+"""Readable local summaries, originals remain separate and explicitly unvalidated."""
+import csv
+import html
+import json
+import re
+from collections import Counter
+from pathlib import Path
+from datetime import datetime
+from urllib.parse import urlencode
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astropy.time import Time
+
+CATEGORIES=['PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO']
+BASE='https://astro.swarthmore.edu/transits/'
+
+
+def slug(name):
+    return re.sub(r'[^a-zA-Z0-9_.-]+','_',name).strip('._') or 'target'
+
+
+def fmt(x,d=1):
+    return 'n/d' if x is None else f'{x:.{d}f}'
+
+
+def links(e,t,p):
+    c=SkyCoord(t['RA'],t['Dec'],unit=(u.hourangle,u.deg))
+    chart=BASE+'aladin.html?'+urlencode(dict(name=t['name'],ra=c.ra.deg,dec=c.dec.deg))
+    # plot_airmass takes central JD in full, start/end as JD-2450000, as upstream template.
+    mid=Time(datetime.fromisoformat(e['mid_utc'])).jd
+    begin=Time(datetime.fromisoformat(e['ingress_utc'])).jd-2450000
+    end=Time(datetime.fromisoformat(e['egress_utc'])).jd-2450000
+    air=BASE+'plot_airmass.cgi?'+urlencode(dict(observatory_string='Specified_Lat_Long',
+        observatory_latitude=p['latitude'],observatory_longitude=p['longitude'],
+        target=t['name'],ra=c.ra.hour,dec=c.dec.deg,timezone=p['timezone'],jd=mid,
+        jd_start=begin,jd_end=end,use_utc=0,max_airmass=4))
+    return chart,air
+
+
+def make_pdf(path,title,events,targets,p):
+    styles=getSampleStyleSheet()
+    styles.add(ParagraphStyle(name='SmallUAN',fontName='Helvetica',fontSize=8.2,leading=11,spaceAfter=4))
+    styles.add(ParagraphStyle(name='CardUAN',fontName='Helvetica-Bold',fontSize=11,leading=14,textColor=colors.HexColor('#123b50'),spaceAfter=5))
+    para=lambda s: Paragraph(s,styles['SmallUAN'])
+    story=[Paragraph('UAN Transit Planner',styles['Title']),Paragraph(title,styles['Heading1']),
+           para(f'{html.escape(p["name"])} | {html.escape(p["timezone"])} | {len(events)} eventi in fascia pratica'),
+           para(f'Copertura: quota ≥ {p["visibility_altitude_deg"]}° e Sole ≤ {p["twilight_deg"]}°. '
+                'Orari con data e offset UTC. La baseline può terminare dopo il limite del transito. '
+                'Sintesi locale di eventi TAPIR con metriche Astropy; categorie organizzative, non ufficiali UAN.'),Spacer(1,12)]
+    if not events:
+        story.append(para('Nessun evento soddisfa questa categoria e la disponibilità pratica nell’intervallo richiesto. '
+                          'Consultare l’archivio completo per gli eventi fuori orario e le esclusioni.'))
+    for e in events:
+        chart,air=links(e,targets[e['name']],p)
+        head=Paragraph(html.escape(e['name'])+' · '+html.escape(e['mid_local'][:10]),styles['CardUAN'])
+        rows=[['Ingresso locale','Centro locale','Uscita locale'],
+              [e[k].replace('T',' ') for k in ('ingress_local','mid_local','egress_local')],
+              ['Quote ingresso / centro / uscita','Transito / entro orari','Baseline pratica prima / dopo'],
+              [f'{fmt(e["altitude_ingress_deg"])} / {fmt(e["altitude_mid_deg"])} / {fmt(e["altitude_egress_deg"])}°',
+               f'{fmt(e["transit_percent"])}% / {fmt(e["practical_transit_percent"])}%',
+               f'{fmt(e.get("practical_baseline_before_minutes",e["baseline_before_minutes"]))} / {fmt(e.get("practical_baseline_after_minutes",e["baseline_after_minutes"]))} min']]
+        table=Table([[para(html.escape(str(v))) for v in row] for row in rows],colWidths=[171]*3)
+        table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e5eef2')),
+              ('BACKGROUND',(0,2),(-1,2),colors.HexColor('#e5eef2')),('VALIGN',(0,0),(-1,-1),'TOP'),
+              ('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]))
+        info=f'Durata {fmt(e["duration_minutes"])} min · quota min/max {fmt(e["altitude_min_deg"])} / {fmt(e["altitude_max_deg"])}° · '
+        info+=f'{html.escape(e["magnitude_band"])} {fmt(e["magnitude"])} · profondità {fmt(e["depth_ppt"])} ppt.'
+        moon=f'Luna al centro: {fmt(e["moon_illumination_percent"])}% a {fmt(e["moon_separation_deg"])}°, quota {fmt(e["moon_altitude_mid_deg"])}°. '
+        moon+=f'Incertezza centro: {fmt(e["uncertainty_minutes"])} min. Baseline richiesta per lato: {fmt(e["baseline_denominator_minutes_per_side"])} min.'
+        session='Sessione desiderata: '+e['session_start_local'].replace('T',' ')+' → '+e['session_end_local'].replace('T',' ')
+        card=[head,table,Spacer(1,5),para(info),para(moon),para(html.escape(session)),
+              para('<b>'+html.escape(e['reason'])+'</b>'),para(html.escape(e.get('logistics_note',''))),
+              para(f'<link href="{html.escape(chart,quote=True)}" color="#14648a">Carta del campo (Aladin, online)</link> · '
+                   f'<link href="{html.escape(air,quote=True)}" color="#14648a">Grafico airmass (online)</link>'),Spacer(1,15)]
+        story.append(KeepTogether(card))
+    def footer(canvas,doc):
+        canvas.setFont('Helvetica',8);canvas.setFillColor(colors.grey)
+        canvas.drawString(40,23,'Ricalcolare le effemeridi prima di osservare. Dettagli e fonti nell’archivio.')
+        canvas.drawRightString(A4[0]-40,23,str(doc.page))
+    SimpleDocTemplate(str(path),pagesize=A4,rightMargin=40,leftMargin=40,topMargin=35,bottomMargin=40).build(story,onFirstPage=footer,onLaterPages=footer)
+
+
+def write_reports(out,events,targets,rejections,manifest):
+    archive=out/'9_ARCHIVIO_COMPLETO';p=manifest['profile']
+    events.sort(key=lambda e:(CATEGORIES.index(e['category']),e['mid_utc'],e['name']))
+    target_map={t['name']:t for t in targets}
+    with (archive/'risultati.csv').open('w',newline='',encoding='utf-8') as f:
+        fields=list(events[0]) if events else ['name','category','reason']
+        w=csv.DictWriter(f,fieldnames=fields);w.writeheader()
+        for e in events:
+            w.writerow({k:json.dumps(v,ensure_ascii=False) if isinstance(v,(list,dict)) else v for k,v in e.items()})
+    (archive/'risultati.json').write_text(json.dumps(events,ensure_ascii=False,indent=2))
+    (archive/'target_esclusi.json').write_text(json.dumps(rejections,ensure_ascii=False,indent=2))
+    counts=Counter(e['category'] for e in events)
+    practical=Counter(e['category'] for e in events if e['practical'])
+    for i,category in enumerate(CATEGORIES[:3],1):
+        make_pdf(out/f'{i}_{category.replace(" ","_")}.pdf',category,
+                 [e for e in events if e['category']==category and e['practical']],target_map,p)
+    index=[]
+    target_summaries=[]
+    style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'
+    for t in targets:
+        name=t['name'];folder=archive/slug(name);folder.mkdir(exist_ok=True)
+        group=[e for e in events if e['name']==name]
+        c=SkyCoord(t['RA'],t['Dec'],unit=(u.hourangle,u.deg))
+        hmax=90-abs(p['latitude']-c.dec.deg)
+        best=min((CATEGORIES.index(e['category']) for e in group),default=None)
+        target_summaries.append(dict(name=name,max_altitude_theoretical_deg=hmax,events=len(group),
+            practical_candidates=sum(e['practical'] and e['category']!='NON CONSIGLIATO' for e in group),
+            best_astronomical_class=CATEGORIES[best] if best is not None else 'NESSUN EVENTO NEL PERIODO'))
+        index.append(f'<li><a href="{slug(name)}/index.html">{html.escape(name)}</a> - {len(group)} eventi</li>')
+        parts=['<!doctype html><html lang="it"><meta charset="utf-8"><title>'+html.escape(name)+'</title>'+style,
+               '<h1>'+html.escape(name)+f'</h1><p>Massima quota teorica dal sito: <b>{hmax:.1f}°</b>.</p><p>Schede degli eventi, non immagini del campo stellare. '
+               'Metriche indipendenti Astropy; tutte le categorie e gli orari conservati.</p>',
+               '<p>Query TAPIR originali (non corrette): '+ ' · '.join(f'<a href="{f.name}">{f.stem}</a>' for f in sorted(folder.glob('tapir_*.html')) )+'</p>']
+        if not group: parts.append('<p>Nessun centro di transito nel periodo richiesto.</p>')
+        parts.append('<table><tr><th>Centro locale</th><th>Classe</th><th>Transito</th><th>Quota min/centro/max</th><th>Fascia pratica</th></tr>')
+        for e in group:
+            parts.append('<tr>'+''.join('<td>'+html.escape(v)+'</td>' for v in [e['mid_local'],e['category'],fmt(e['transit_percent'])+'%',
+                '/'.join(fmt(e[k]) for k in ('altitude_min_deg','altitude_mid_deg','altitude_max_deg'))+'°','Sì' if e['practical'] else 'No'])+'</tr>')
+        parts.append('</table>')
+        for e in group:
+            chart,air=links(e,t,p)
+            parts.append('<details><summary>'+html.escape(e['mid_local']+' — '+e['reason'])+'</summary>'+
+                         f'<p><a href="{html.escape(chart)}">Carta del campo Aladin</a> · <a href="{html.escape(air)}">Airmass</a></p>'+
+                         '<pre>'+html.escape(json.dumps(e,indent=2,ensure_ascii=False))+'</pre></details>')
+        parts.append('</html>');(folder/'index.html').write_text('\n'.join(parts))
+    (archive/'riepilogo_target.json').write_text(json.dumps(target_summaries,indent=2,ensure_ascii=False))
+    with (archive/'riepilogo_target.csv').open('w',newline='',encoding='utf-8') as f:
+        w=csv.DictWriter(f,fieldnames=['name','max_altitude_theoretical_deg','events','practical_candidates','best_astronomical_class']);w.writeheader();w.writerows(target_summaries)
+    (archive/'index.html').write_text('<!doctype html><html lang="it"><meta charset="utf-8"><title>Archivio UAN</title>'+style+
+                                     '<h1>Archivio completo</h1><ul>'+''.join(index)+'</ul><h2>Target esclusi</h2><pre>'+html.escape(json.dumps(rejections,indent=2,ensure_ascii=False))+'</pre></html>')
+    summary='\n'.join(f'{c}: {counts[c]} totali; {practical[c]} in fascia pratica' for c in CATEGORIES)
+    target_text='\n'.join(f'{t["name"]}: quota teorica {t["max_altitude_theoretical_deg"]:.1f}°; {t["practical_candidates"]} candidati pratici; migliore classe astronomica {t["best_astronomical_class"]}' for t in target_summaries)
+    readme=f'''UAN TRANSIT PLANNER v1
+Esecuzione UTC: {manifest['created_utc']}
+Periodo dei centri di transito: {manifest['start']} incluso, {manifest['end_exclusive']} escluso, in {p['timezone']}.
+Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
+
+COME LEGGERE IL PACCHETTO
+1_PRIMA_SCELTA.pdf: occasioni che soddisfano le euristiche di qualità e gli orari.
+2_ALTERNATIVE.pdf: transiti completi con condizioni meno favorevoli.
+3_DA_VALUTARE.pdf: casi parziali, bassi, incerti o con baseline insufficiente.
+I PDF vuoti spiegano che non ci sono eventi nella categoria.
+9_ARCHIVIO_COMPLETO/index.html: tutti gli eventi, anche fuori orario e non consigliati.
+risultati.csv / risultati.json: metriche complete. target_esclusi.json: problemi per target.
+Le schede HTML sono tabelle di eventi; le carte del campo e i grafici airmass sono link online.
+
+RISULTATI
+{summary}
+
+PER TARGET
+{target_text}
+
+Target esclusi: {len(rejections)}. Vedi archivio per motivi e fonti.
+
+ORARI E COPERTURA
+Ora locale {p['timezone']} con offset stagionale esplicito; UTC nell'archivio.
+Copertura astronomica: target >= {p['visibility_altitude_deg']}°, Sole <= {p['twilight_deg']}°.
+La soglia di {p['preferred_altitude_deg']}° riguarda la qualità e non la ricerca iniziale.
+Disponibilità: {p['session_start']} fino alle {p['session_end']} della notte osservativa.
+La baseline post-transito può terminare dopo questo limite. Controllare la sessione desiderata.
+Il filtro pratico richiede ingresso e uscita nella fascia oraria; una classe DA VALUTARE
+può avere soltanto una parte del transito al buio o sopra la soglia.
+
+VALIDITÀ
+Le categorie sono organizzative, non un protocollo ufficiale UAN né categorie TAPIR.
+Il risultato non garantisce una misura fotometrica: strumento, stelle di confronto,
+saturazione, seeing, meteo e riduzione non sono modellati.
+Per osservare in futuro aggiornare catalogo ed effemeridi, ricontrollare Luna e orari.
+Leggere NOTE_SELEZIONE.txt per ricostruire metodologia, dati e limitazioni.
+'''
+    (out/'0_LEGGIMI.txt').write_text(readme)
+    notes=readme+f'''
+METODO E PROVENIENZA
+Fonte coordinate: {p['coordinate_source']}
+TAPIR: https://github.com/elnjensen/Tapir ; commit {manifest['tapir_commit']}.
+NASA: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+Astropy: https://docs.astropy.org/en/stable/time/index.html
+Alias: https://exoplanetarchive.ipac.caltech.edu/docs/sysaliases.html
+
+Periodi ed epoche vengono scelti dalla STESSA riga PS, solo BJD-TDB espliciti,
+minimizzando il massimo errore propagato agli estremi della finestra richiesta.
+Senza errori completi si preferisce una riga default coerente e si segnala incertezza ignota.
+Durata e proprietà fotometriche possono provenire da PSCompPars: il fallback è registrato.
+Il parser NASA upstream converte i campi nel formato TAPIR, compresa profondità % -> ppt.
+Una profondità stimata e l'uso di Gaia G sono identificabili nei commenti/provenienza.
+Le righe PS escluse e la riga scelta si trovano in dati_originali/selected_ephemerides.json.
+Non si presume che BJD senza scala dichiarata significhi BJD-TDB.
+
+TAPIR genera tutti gli eventi usando space=1 SOLO per enumerarli senza filtri geometrici.
+Le percentuali della query space non sono usate come osservabilità da terra.
+Una seconda query terrestre, quota 0°, conserva le percentuali originali e gli HTML.
+Il confronto delle percentuali usa un ricalcolo Astropy alla STESSA soglia 0°.
+Le metriche operative usano invece {p['visibility_altitude_deg']}°.
+L'unica modifica alla copia di TAPIR è nel template CSV: aggiunge jd_utc_exact,
+JD UTC completo non arrotondato come i campi jd_mid originali (JD-2450000).
+Nessuna modifica al motore o al checkout originale.
+
+Il centro UTC viene da TAPIR. Astropy verifica BJD_TDB = UTC convertito in TDB +
+light travel time baricentrico. Residui >2 s penalizzano la classe.
+Tempi ingresso/uscita ricostruiti dal centro e dalla durata del catalogo TAPIR.
+Il periodo è lineare: TTV note penalizzano il target; non è un modello dinamico.
+Errore centro = sqrt(sigma_epoca^2 + ciclo^2*sigma_periodo^2), covarianza non disponibile.
+Errori mancanti restano null; l'errore sulla durata non è propagato ai contatti.
+La baseline per lato è 60*baseline_hours minuti, più 1 sigma del centro se disponibile.
+Ogni percentuale baseline ha quel denominatore per lato, non la somma dei due lati.
+La baseline pratica prima è limitata anche dall’inizio disponibilità; quella dopo può
+superare il limite del transito. I PDF mostrano i minuti pratici; le classi restano astronomiche.
+Le finestre notturne nell’archivio sono limitate alla sessione calcolata, non all’intera notte.
+Gli orari configurati ambigui in autunno usano la seconda occorrenza, quelli inesistenti
+in primavera vengono spostati avanti. Il crepuscolo viene calcolato sulla notte effettiva.
+
+Le finestre sono intersezioni di quota e notte, con campionamento di {p['sampling_seconds']} s
+ed interpolazione lineare separata dei passaggi per quota/Sole. Non si riempiono i buchi.
+Le quote min/max sono campionate, con ingresso/centro/uscita sempre inclusi.
+Rifrazione disattivata, orizzonte piano; ostacoli locali non modellati.
+La copertura è durata dell'intersezione / durata del transito. Non si tronca un 915%:
+si conserva il dato TAPIR e si usa il nuovo calcolo. Scarti >2 punti percentuali sono segnalati.
+Tolleranza transito completo: {p['complete_tolerance_seconds']} s mancanti.
+Luna: metriche al centro, minimo della distanza campionato ogni <=10 minuti;
+penalità se contemporaneamente sopra orizzonte, nel transito visibile,
+illuminazione >= {p['moon_bright_percent']}% e distanza <= {p['moon_close_deg']}°.
+Una Luna brillante lontana non è automaticamente penalizzata.
+
+CLASSI (euristiche modificabili, nessuno score compensativo)
+Geometria teorica massima = 90 - abs(latitudine - declinazione J2000).
+Sotto {p['severe_altitude_deg']}°: target non consigliato da questo sito.
+Transito con zero copertura o quota massima evento sotto soglia grave: evento non consigliato.
+Dati mancanti, TTV, errore centro > {p['maximum_uncertainty_minutes']} min, transito parziale,
+centro <{p['preferred_altitude_deg']}° o baseline su un lato <{p['minimum_baseline_minutes']} min: da valutare.
+Completo con centro >= quota desiderata ma parti basse o Luna critica: alternative.
+Completo tutto sopra quota desiderata e controlli precedenti superati: prima scelta.
+Magnitudine e profondità sono esposte, senza inventare una sensibilità dello strumento.
+Gli eventi sono ordinati per classe e data, senza ranking fotometrico non calibrato.
+
+LIMITI COMPUTAZIONALI
+Per errori molto grandi la finestra calcolata per lato è limitata a min(P/2, 24 ore),
+ma il denominatore richiesto e il flag di limitazione sono conservati.
+Astropy usa effemeridi builtin e IERS distribuito con la dipendenza; avvisi sono in warnings.log.
+Le previsioni future di rotazione terrestre e le effemeridi planetarie non sono misure future.
+Una versione locale uguale al sito non equivale a controllo astronomico indipendente.
+Gli HTML originali sono query separate. I PDF sono sintesi locali con conteggi propri.
+
+PARAMETRI, VERSIONI E FILE
+Vedi manifest.json, profilo e snapshot del sorgente in dati_originali.
+Gli hash SHA256 dei file originali sono nel manifest finale.
+Comando riproducibile: {manifest['command']}
+'''
+    (archive/'NOTE_SELEZIONE.txt').write_text(notes)
+    return dict(counts),dict(practical)
