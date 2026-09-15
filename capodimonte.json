@@ -24,5 +24,6 @@
   "maximum_uncertainty_minutes": 10,
   "timing_residual_limit_seconds": 2,
   "backup_preferred_separation_days": 7,
-  "backup_fallback_separation_days": 3
+  "backup_fallback_separation_days": 3,
+  "max_review_events_per_target": 3
 }

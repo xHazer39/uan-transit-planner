@@ -143,6 +143,26 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
   insieme selezione invariato). verify_output PASS; controllo visivo di prima
   pagina, cambio mese (OTTOBRE 2026 a pagina 7) e ultima pagina: OK.
 
+# Calendario operativo: EXTRA visibili (16 settembre 2026, reporting only)
+
+- Policy v2.1.1 NON modificata: classificazione, moon risk, score, logistica P1/P2/P3
+  e selezione PRIMARY/BACKUP1/BACKUP2 restano esattamente gli stessi (verificato da test).
+- PRIMARY/BACKUP sono le TRE raccomandazioni principali per target, non un filtro:
+  1_PRIMA_SCELTA.pdf e 1_PRIMA_SCELTA.html ora contengono TUTTI gli eventi
+  PRIMA SCELTA + P1 (97 nell'archivio annuale: 78 PRIMARY/BACKUP + 19 EXTRA, 34 target)
+  in ordine cronologico globale con layout compatto a tabella (3 pagine, prima 102).
+- 2_ALTERNATIVE: calendario cronologico puro degli ALTERNATIVE+P1 (116 eventi, 3 pagine).
+- 3_DA_VALUTARE: vista curata per target (migliori 3 P1 per target, cronologica, 5 pagine).
+- Nuovi file machine-readable: calendario_prima_scelta.csv/.json (20 campi, ordinati).
+- riepilogo_target: aggiunti first_choice_p1_count, extra_first_choice_p1_count,
+  extra_first_choice_dates. Manifest: sezione reporting + conteggi calendario.
+- verify_output esteso: completezza PRIMA/P1, purezza di classe, nessun P2/P3,
+  nessun duplicato, ordine cronologico, ruoli invariati, EXTRA coerenti. PASS.
+- WASP-77 A b regression: 3 occasioni vere (PRIMARY 10/11, BACKUP1 10/12, BACKUP2 09/01);
+  nessun EXTRA forzato: tutte le altre notti falliscono davvero la policy (copertura
+  parziale, baseline debole, Luna, transito diurno).
+- 30/30 test (12 nuovi di calendario). TAPIR/Astropy NON rieseguiti: solo reporting.
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello

@@ -8,6 +8,7 @@ from astropy.coordinates import SkyCoord,EarthLocation
 from astropy.time import Time
 from observing import analyze,coverage
 from planner import read_csv
+from reports import compute_selection,slug
 
 out=Path(sys.argv[1]);archive=out/'9_ARCHIVIO_COMPLETO';raw=archive/'dati_originali'
 m=json.loads((archive/'manifest.json').read_text());events=json.loads((archive/'risultati.json').read_text())
@@ -51,6 +52,29 @@ for name,es in byt.items():
     for e in es[1:]:
         gap=abs(e['mid_ts']-es[0]['mid_ts'])
         assert gap>=p['backup_fallback_separation_days']*86400-120,('backup too close',name,gap/86400)
+# Reporting calendar (v2.1): complete, chronological, pure, roles preserved.
+cal_path=archive/'calendario_prima_scelta.json'
+assert cal_path.is_file(),'calendar json missing'
+cal=json.loads(cal_path.read_text())
+cal_ids=[r['event_id'] for r in cal]
+assert len(cal_ids)==len(set(cal_ids)),('calendar duplicates',)
+prima_p1={slug(e['name'])+'-c'+str(e['cycle']) for e in events
+          if e.get('quality_class')=='PRIMA SCELTA' and e.get('logistics_class')=='P1'}
+assert set(cal_ids)==prima_p1,('calendar incomplete or impure',len(set(cal_ids)),len(prima_p1))
+mids=[datetime.fromisoformat(r['mid_local']) for r in cal]
+assert mids==sorted(mids),('calendar not chronological',)
+assert all(r['quality_class']=='PRIMA SCELTA' and r['logistics_class']=='P1' for r in cal)
+stored_roles={(e['name'],e['cycle']):e.get('selection_role') for e in events if e.get('selection_role')}
+for r in cal:
+    want=stored_roles.get((r['target'],int(r['event_id'].rsplit('-c',1)[-1])))
+    assert r['selection_role']==want,('calendar role drift',r['event_id'])
+    assert r['display_role']==(r['selection_role'] or 'EXTRA'),('display role',r['event_id'])
+fresh_sel=compute_selection(list(events),p)
+for name,roles in fresh_sel.items():
+    for role,e in roles:
+        assert stored_roles.get((e['name'],e['cycle']))==role,('selection drift',name,e['cycle'])
+assert m.get('reporting',{}).get('first_choice_scope')=='all PRIMA SCELTA + P1'
+assert m['reporting']['calendar_events']==len(cal)
 # Re-evaluate up to three partial events at 30-second sampling, independent of rendering.
 convergence=[]
 for e in [e for e in events if 1<e['transit_percent']<99][:3]:

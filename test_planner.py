@@ -271,4 +271,115 @@ class ChronologyChecks(unittest.TestCase):
         self.assertEqual({r for _,r,_ in flat},{'PRIMARY','BACKUP1','BACKUP2'})
 
 
+class CalendarChecks(unittest.TestCase):
+    def setUp(self):
+        from reports import calendar_rows,curated_review_rows,compute_selection
+        from datetime import datetime,timezone,timedelta
+        self.calendar_rows=calendar_rows
+        self.curated=curated_review_rows
+        self.compute_selection=compute_selection
+        self.p=dict(backup_preferred_separation_days=7,backup_fallback_separation_days=3,
+                    max_review_events_per_target=3,preferred_altitude_deg=30)
+        self.base=datetime(2026,10,1,22,0,tzinfo=timezone.utc)
+        self.timedelta=timedelta
+    def ev(self,name,cycle,days,cat='PRIMA SCELTA',log='P1',score=90.0):
+        mid=self.base+self.timedelta(days=days)
+        return dict(name=name,cycle=cycle,mid_utc=mid.astimezone(timezone.utc).isoformat(),
+                    mid_local=mid.isoformat(),start_local=mid.isoformat(),end_local=mid.isoformat(),
+                    category=cat,quality_class=cat,logistics_class=log,score=score,
+                    altitude_ingress_deg=35,altitude_mid_deg=40,altitude_egress_deg=33,
+                    transit_percent=100,baseline_before_percent=100,baseline_after_percent=100,
+                    moon_risk='BASSA',moon_illumination_percent=3,moon_min_separation_deg=120,
+                    reason_codes=[])
+    def roles(self,events):
+        sel=self.compute_selection(events,self.p)
+        return {(e['name'],e['cycle']):e['selection_role'] for roles in sel.values() for _,e in roles}
+    def test_six_prima_p1_three_recommended_three_extra(self):
+        events=[self.ev('WASP-X b',i,d) for i,d in enumerate([0,13,42,55,69,82])]
+        roles=self.roles(events)
+        self.assertEqual(len(roles),3)
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        self.assertEqual(len(rows),6)
+        self.assertEqual(sum(1 for r in rows if r['display_role']=='EXTRA'),3)
+        self.assertEqual(sum(1 for r in rows if r['display_role'] in ('PRIMARY','BACKUP1','BACKUP2')),3)
+    def test_primary_backup_set_identical_and_untouched(self):
+        events=[self.ev('WASP-X b',i,d) for i,d in enumerate([0,13,42,55])]
+        before=self.roles([dict(e) for e in events])
+        self.calendar_rows(events,'PRIMA SCELTA')
+        self.assertEqual(self.roles(events),before)
+    def test_alternative_backup_not_in_prima_calendar(self):
+        events=[self.ev('A b',1,0),self.ev('A b',2,10,'ALTERNATIVE')]
+        roles=self.roles(events)
+        self.assertEqual(roles[('A b',2)],'BACKUP1')
+        prima=self.calendar_rows(events,'PRIMA SCELTA')
+        self.assertEqual([r['event_id'] for r in prima],['A_b-c1'])
+        alt=self.calendar_rows(events,'ALTERNATIVE')
+        self.assertEqual([r['display_role'] for r in alt],['BACKUP1'])
+    def test_unselected_prima_p1_is_extra(self):
+        events=[self.ev('A b',1,0),self.ev('A b',2,9),self.ev('A b',3,18),self.ev('A b',4,27)]
+        self.roles(events)
+        self.calendar_rows(events,'PRIMA SCELTA')
+        extras=[r for r in self.calendar_rows(events,'PRIMA SCELTA') if r['display_role']=='EXTRA']
+        self.assertEqual(len(extras),1)
+        self.assertIsNone(self.roles(events).get(('A b',4)))
+    def test_p2_and_p3_excluded_from_operational_calendar(self):
+        events=[self.ev('A b',1,0),self.ev('A b',2,10,log='P2'),self.ev('A b',3,20,log='P3')]
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        self.assertEqual([r['event_id'] for r in rows],['A_b-c1'])
+    def test_order_ignores_target_name(self):
+        events=[self.ev('Zeta b',1,9),self.ev('Alpha b',2,8)]
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        self.assertEqual([r['name'] for r in rows],['Alpha b','Zeta b'])
+    def test_year_boundary(self):
+        events=[self.ev('A b',1,76),self.ev('B b',2,98)]
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        self.assertTrue(rows[0]['mid_local'].startswith('2026-12'))
+        self.assertTrue(rows[1]['mid_local'].startswith('2027-01'))
+    def test_dst_europe_rome_offsets(self):
+        from zoneinfo import ZoneInfo
+        from datetime import datetime,timedelta
+        z=ZoneInfo('Europe/Rome')
+        # Oct 18 2026 e' CEST (+02), Nov 8 e' CET (+01): same wall clock, real offsets.
+        ev1=self.ev('A b',1,0); ev2=self.ev('B b',2,0)
+        ev1['mid_local']=datetime(2026,10,18,22,0,tzinfo=z).isoformat()
+        ev2['mid_local']=datetime(2026,11,8,22,0,tzinfo=z).isoformat()
+        events=[ev1,ev2]
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        from datetime import datetime
+        offs={datetime.fromisoformat(r['mid_local']).utcoffset().total_seconds() for r in rows}
+        self.assertEqual(offs,{7200.0,3600.0})
+        mids=[datetime.fromisoformat(r['mid_local']) for r in rows]
+        self.assertEqual(mids,sorted(mids))
+    def test_no_duplicate_event_ids(self):
+        events=[self.ev('A b',i,d) for i,d in enumerate([0,9,18])]
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        ids=[r['event_id'] for r in rows]
+        self.assertEqual(len(ids),len(set(ids)))
+    def test_calendar_count_equals_prima_p1_count(self):
+        events=[self.ev('A b',1,0),self.ev('A b',2,9,log='P2'),self.ev('B b',3,10,'ALTERNATIVE'),
+                self.ev('C b',4,12),self.ev('D b',5,14,'DA VALUTARE')]
+        rows=self.calendar_rows(events,'PRIMA SCELTA')
+        expected=sum(1 for e in events if e['quality_class']=='PRIMA SCELTA' and e['logistics_class']=='P1')
+        self.assertEqual(len(rows),expected)
+        self.assertEqual({r['quality_class'] for r in rows},{'PRIMA SCELTA'})
+    def test_classification_score_roles_untouched_by_calendar(self):
+        import copy
+        events=[self.ev('A b',1,0),self.ev('B b',2,10,'ALTERNATIVE',score=77.7)]
+        snapshot=copy.deepcopy(events)
+        self.calendar_rows(events,'PRIMA SCELTA')
+        self.calendar_rows(events,'ALTERNATIVE')
+        for a,b in zip(events,snapshot):
+            for k in ('category','quality_class','logistics_class','score','cycle','mid_local'):
+                self.assertEqual(a[k],b[k],k)
+            self.assertEqual(a.get('selection_role'),b.get('selection_role'))
+    def test_review_curated_max_per_target_chronological(self):
+        events=[self.ev('A b',i,d,'DA VALUTARE',score=s) for i,d,s in
+                [(1,0,50),(2,1,60),(3,2,55),(4,3,45)]]
+        rows=self.curated(events,self.p)
+        self.assertEqual(len(rows),3)
+        self.assertTrue(all(r['name']=='A b' for r in rows))
+        self.assertEqual([r['event_id'] for r in rows],['A_b-c1','A_b-c2','A_b-c3'])
+        self.assertTrue(all(r['display_role']=='REVIEW' for r in rows))
+
+
 if __name__=='__main__': unittest.main()

@@ -284,6 +284,7 @@ def validate_profile(p):
                     ('first_choice_min_percent',50,100),('baseline_weak_percent',0,100),
                     ('baseline_good_percent',0,100),('timing_residual_limit_seconds',0.1,60),
                     ('backup_preferred_separation_days',0,60),('backup_fallback_separation_days',0,60),
+                    ('max_review_events_per_target',1,50),
                     ('maximum_uncertainty_minutes',0,1440)]:
         v=number(p.get(k))
         if v is None or not lo<=v<=hi: raise ValueError(f'Profilo: {k} deve essere fra {lo} e {hi}')
