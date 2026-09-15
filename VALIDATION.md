@@ -47,6 +47,23 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
   pratici (19/7/40); categorie vuote e target senza eventi gestiti (riepilogo_target.csv).
 - `git diff --check`: PASS; repository senza file generati o spazzatura.
 
+# Formato PDF richiesto (15 settembre 2026, serata)
+
+- I tre PDF di categoria ora replicano il pacchetto storico: tabelle TAPIR originali
+  in A4 orizzontale, una query TAPIR delimitata per evento pratico, colonne identiche
+  alla stampa web (data locale/UTC, nome e link, V, Start-Mid-End con Luna, durata,
+  BJD_TDB, % transito/baseline con diagramma).
+- Implementazione: query TAPIR individuale per evento (finestra 1 o 2 giorni secondo
+  il periodo), tabella estratta staticamente, colonne nascoste dal JS del sito rimosse,
+  rendering con chromium headless. Fallback automatico alle schede ReportLab.
+- Fix during test: `risultati.csv` ora include tutte le chiavi presenti negli eventi
+  (prima Crash se un evento aveva campi extra); rendering in temp sotto $HOME perché
+  snap chromium non accede a /tmp.
+- Rigenerati i PDF dei pacchetti esistenti senza ricalcolare le metriche:
+  67 target: 66/66 tabelle (141 s); 5 target: 28/28 (63 s). Conteggi e ZIP invariati,
+  `verify_output.py`: PASS su entrambi; una pagina per evento (19/7/40 e 5/4/19).
+- Suite 11/11 dopo le modifiche. Smoke end-to-end WASP-77 A b (2 giorni): PASS.
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello

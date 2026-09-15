@@ -22,7 +22,7 @@ from urllib.request import urlopen,Request
 from zoneinfo import ZoneInfo
 from astropy.time import Time
 from observing import number,analyze
-from reports import slug,write_reports,BASE
+from reports import slug,write_reports,BASE,CATEGORIES
 
 ROOT=Path(__file__).resolve().parent
 NASA='https://exoplanetarchive.ipac.caltech.edu/'
@@ -226,6 +226,29 @@ def tapir_events(t,p,start,days,engine,raw,folder):
     return list(all_events.values()),ground_events,queries
 
 
+def tapir_event_html(t,p,e,engine,raw,folder,idx):
+    """One ground TAPIR HTML query bounded to a single event: table for the category PDFs."""
+    mid_local=datetime.fromisoformat(e['mid_local'])
+    evening=mid_local.date() if mid_local.hour>=12 else mid_local.date()-timedelta(days=1)
+    days=1 if float(t['period'])<2.2 else 2
+    query=dict(observatory_string='Specified_Lat_Long',observatory_latitude=p['latitude'],
+               observatory_longitude=p['longitude'],timezone=p['timezone'],use_utc=1,
+               start_date=evening.strftime('%m-%d-%Y'),days_to_print=days,days_in_past=0,
+               minimum_start_elevation=0,minimum_end_elevation=0,and_vs_or='or',minimum_ha=-12,
+               maximum_ha=12,baseline_hrs=p['baseline_hours'],show_unc=int(p['extend_uncertainty']),
+               minimum_depth=-999,maximum_V_mag=99,minimum_priority=0,twilight=p['twilight_deg'],
+               target_string='^'+re.escape(t['name'])+'$',max_airmass=4,single_object=0,space=0,print_html=1)
+    proc=run_perl(engine/'print_transits.cgi',engine,query=query)
+    name=f'{slug(t["name"])}_event_{idx:04d}'
+    (raw/(name+'.txt')).write_text(proc.stdout)
+    (raw/(name+'.log')).write_text(proc.stderr)
+    if proc.returncode: raise ValueError('TAPIR fallito (evento): '+proc.stderr[-200:])
+    body=proc.stdout[proc.stdout.lower().find('<!doctype'):] if '<!doctype' in proc.stdout.lower() else proc.stdout[proc.stdout.lower().find('<html'):]
+    body=re.sub(r'<head[^>]*>',lambda m:m.group(0)+'<base href="'+BASE+'">',body,count=1,flags=re.I)
+    (folder/f'tapir_event_{idx:04d}.html').write_text(body)
+    return f'{folder.name}/tapir_event_{idx:04d}.html'
+
+
 def arguments(argv=None):
     parser=argparse.ArgumentParser(description='Pianifica transiti con TAPIR e verifica indipendente Astropy.')
     sub=parser.add_subparsers(dest='action',required=True)
@@ -349,6 +372,12 @@ def main(argv=None):
             log(f'  {len(candidates)} eventi; controllo indipendente delle finestre...')
             for i,r in enumerate(candidates):
                 e=analyze(r,t,p,ground.get(round(float(r['jd_utc_exact']),7)))
+                if e['practical'] and e['category'] in CATEGORIES[:3]:
+                    try:
+                        e['tapir_event_html']=tapir_event_html(t,p,e,engine,raw,folder,i)
+                    except (ValueError,OSError,subprocess.SubprocessError) as exc:
+                        e['tapir_event_html']=None
+                        log(f'  ATTENZIONE: tabella TAPIR non generata per {t["name"]} ciclo {e["cycle"]}: {exc}')
                 events.append(e)
                 if (i+1)%25==0: log(f'  {t["name"]}: {i+1}/{len(candidates)}')
         log('Generazione PDF, HTML e archivio...')

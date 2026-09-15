@@ -69,11 +69,20 @@ il programma non garantisce misurabilità di una data profondità.
 ## Cosa aprire
 
 1. `0_LEGGIMI.txt`: sintesi e istruzioni.
-2. `1_PRIMA_SCELTA.pdf`, `2_ALTERNATIVE.pdf`, `3_DA_VALUTARE.pdf`: eventi in fascia pratica.
+2. `1_PRIMA_SCELTA.pdf`, `2_ALTERNATIVE.pdf`, `3_DA_VALUTARE.pdf`: eventi in fascia pratica,
+   presentati come **tabelle TAPIR originali** (una query TAPIR per evento, come nel
+   pacchetto storico): orari locali/UTC, magnitudine, Luna, BJD_TDB, diagramma del
+   transito e link a finding chart/airmass. Le intestazioni sono una sintesi locale;
+   le percentuali TAPIR restano non validate (vedi sotto).
 3. `9_ARCHIVIO_COMPLETO/index.html`: tutti gli eventi per target, inclusi fuori orario
    e non consigliati; tabelle originali TAPIR e link alle carte del campo/airmass online.
 4. `risultati.csv`/`risultati.json`: metriche; `NOTE_SELEZIONE.txt`: metodo e limiti;
    `manifest.json`: parametri, versioni, hash e tempi; `target_esclusi.json`: esclusioni.
+
+I PDF delle categorie richiedono `chromium` (snap va bene) e Internet al momento della
+generazione per CSS e icone remote; il PDF finale è autonomo. Senza chromium, o se una
+query TAPIR per evento fallisce, la categoria ricade automaticamente sulle schede
+locali ReportLab (le categorie vuote usano sempre le schede).
 
 TAPIR è copiato nell'output: il checkout in `~/Downloads/Tapir` non viene modificato.
 La copia del template CSV espone il JD UTC preciso già calcolato dal motore.

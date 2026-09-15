@@ -2,7 +2,11 @@
 import csv
 import html
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from collections import Counter
 from pathlib import Path
 from datetime import datetime
@@ -85,12 +89,90 @@ def make_pdf(path,title,events,targets,p):
     SimpleDocTemplate(str(path),pagesize=A4,rightMargin=40,leftMargin=40,topMargin=35,bottomMargin=40).build(story,onFirstPage=footer,onLaterPages=footer)
 
 
+def chromium_pdf(html_path,pdf_path):
+    exe=shutil.which('chromium') or shutil.which('chromium-browser') or \
+        ('/snap/bin/chromium' if os.path.exists('/snap/bin/chromium') else None)
+    if not exe: return False
+    try:
+        r=subprocess.run([exe,'--headless','--disable-gpu','--virtual-time-budget=20000',
+                          '--no-pdf-header-footer',f'--print-to-pdf={pdf_path}',str(html_path)],
+                         capture_output=True,text=True,timeout=180)
+    except (OSError,subprocess.SubprocessError):
+        return False
+    return r.returncode==0 and Path(pdf_path).is_file() and Path(pdf_path).stat().st_size>1000
+
+
+TAPIR_KEEP_COLUMNS={0,1,2,3,4,5,7}
+
+
+def _strip_hidden_columns(table):
+    """Static equivalent of TAPIR's JS column visibility defaults."""
+    def fix_row(m):
+        row=m.group(0)
+        cells=re.findall(r'<t[dh][^>]*>.*?</t[dh]>',row,re.S)
+        if len(cells)!=14:
+            return row
+        return row[:row.index(cells[0])]+''.join(c for i,c in enumerate(cells) if i in TAPIR_KEEP_COLUMNS)+'</tr>'
+    return re.sub(r'<tr[^>]*>.*?</tr>',fix_row,table,flags=re.S)
+
+
+def tapir_table_pdf(path,title,events,archive):
+    """Category PDF as original TAPIR tables (one bounded query per event), like the historic packet."""
+    frags=[];assets=''
+    for k,e in enumerate(events):
+        page=(archive/e['tapir_event_html']).read_text()
+        page=re.sub(r'<script.*?</script>','',page,flags=re.S|re.I)
+        page=re.sub(r'<p style="background:#fff2cf.*?</p>','',page,flags=re.S|re.I)
+        m=re.search(r'<table.*?</table>',page,flags=re.S|re.I)
+        if not m: return False
+        if k==0:
+            assets+=''.join(re.findall(r'<link[^>]*stylesheet[^>]*>',page,flags=re.I))
+            assets+=''.join(re.findall(r'<style.*?</style>',page,flags=re.S|re.I))
+            intro=''
+            for pat in (r'<p>Only 1 target matches.*?</p>',r'<h2>.*?</h2>',r'<h3>.*?</h3>'):
+                mm=re.search(pat,page,flags=re.S|re.I)
+                if mm: intro+=mm.group(0)
+        else:
+            intro=''
+        frags.append((intro,_strip_hidden_columns(m.group(0))))
+    names=sorted({e['name'] for e in events})
+    closing=' per prime.' if title=='PRIMA SCELTA' else ' come riserva o per valutazione.'
+    body=['<div class="coverbox"><h1>'+html.escape(title)+' - '+html.escape(', '.join(names))+'</h1>'
+          '<p><b>'+str(len(events))+' occasioni consigliate'+closing+'</b></p></div>',
+          '<p style="font-size:10px">Tabelle TAPIR originali, una query per evento. Percentuali TAPIR non validate: '
+          'le verifiche indipendenti sono in risultati.csv e nelle schede dell\'archivio. '
+          'Orari locali con offset e UTC; testo colorato = parte di transito in luce o sotto quota scelta.</p>']
+    for intro,frag in frags:
+        body.append('<div class="pb">'+intro+frag+'</div>')
+    doc=('<!doctype html><html lang="it"><meta charset="utf-8"><title>'+html.escape(title)+'</title>'
+         '<base href="'+BASE+'">'+assets
+         +'<style>@page{size:A4 landscape;margin:9mm}'
+         'body{font-family:"DejaVu Sans",sans-serif;font-size:11px}h1{font-size:17px;margin:2px 0}'
+         'h2{font-size:13px}h3{font-size:12px}.pb{page-break-after:always}'
+         '.coverbox{border:2px solid #000;padding:6px 10px;margin-bottom:8px}</style><body>'
+         +'\n'.join(body)+'</body></html>')
+    # Snap chromium cannot access /tmp: render inside a home-owned temp dir, then move.
+    tmpd=Path(tempfile.mkdtemp(prefix='uan-render-',dir=Path.home()))
+    try:
+        tmp=tmpd/'render.html'
+        tmp.write_text(doc,encoding='utf-8')
+        raw_pdf=tmpd/'out.pdf'
+        ok=chromium_pdf(tmp,raw_pdf)
+        if ok: shutil.move(str(raw_pdf),str(path))
+    finally:
+        shutil.rmtree(tmpd,ignore_errors=True)
+    return ok
+
+
 def write_reports(out,events,targets,rejections,manifest):
     archive=out/'9_ARCHIVIO_COMPLETO';p=manifest['profile']
     events.sort(key=lambda e:(CATEGORIES.index(e['category']),e['mid_utc'],e['name']))
     target_map={t['name']:t for t in targets}
     with (archive/'risultati.csv').open('w',newline='',encoding='utf-8') as f:
-        fields=list(events[0]) if events else ['name','category','reason']
+        fields=[]
+        for e in events:
+            fields+= [k for k in e if k not in fields]
+        if not fields: fields=['name','category','reason']
         w=csv.DictWriter(f,fieldnames=fields);w.writeheader()
         for e in events:
             w.writerow({k:json.dumps(v,ensure_ascii=False) if isinstance(v,(list,dict)) else v for k,v in e.items()})
@@ -99,8 +181,14 @@ def write_reports(out,events,targets,rejections,manifest):
     counts=Counter(e['category'] for e in events)
     practical=Counter(e['category'] for e in events if e['practical'])
     for i,category in enumerate(CATEGORIES[:3],1):
-        make_pdf(out/f'{i}_{category.replace(" ","_")}.pdf',category,
-                 [e for e in events if e['category']==category and e['practical']],target_map,p)
+        evs=[e for e in events if e['category']==category and e['practical']]
+        target=out/f'{i}_{category.replace(" ","_")}.pdf'
+        try:
+            if evs and all(e.get('tapir_event_html') for e in evs) and tapir_table_pdf(target,category,evs,archive):
+                continue
+        except (OSError,KeyError):
+            pass
+        make_pdf(target,category,evs,target_map,p)
     index=[]
     target_summaries=[]
     style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'
