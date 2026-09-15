@@ -16,6 +16,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from observing import geometry_label
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.time import Time
@@ -198,9 +199,15 @@ def write_reports(out,events,targets,rejections,manifest):
         c=SkyCoord(t['RA'],t['Dec'],unit=(u.hourangle,u.deg))
         hmax=90-abs(p['latitude']-c.dec.deg)
         best=min((CATEGORIES.index(e['category']) for e in group),default=None)
-        target_summaries.append(dict(name=name,max_altitude_theoretical_deg=hmax,events=len(group),
+        cands=[e for e in group if e['practical'] and e['category']!='NON CONSIGLIATO']
+        cands.sort(key=lambda e:(CATEGORIES.index(e['category']),-e.get('score',0),e['mid_utc']))
+        picks=[f"{e['mid_local'][:16].replace('T',' ')} ({e['category']}, score {fmt(e.get('score'))})" for e in cands[:3]]
+        picks+=['']*(3-len(picks))
+        target_summaries.append(dict(name=name,max_altitude_theoretical_deg=hmax,
+            geometry_class=geometry_label(hmax,p),events=len(group),
             practical_candidates=sum(e['practical'] and e['category']!='NON CONSIGLIATO' for e in group),
-            best_astronomical_class=CATEGORIES[best] if best is not None else 'NESSUN EVENTO NEL PERIODO'))
+            best_astronomical_class=CATEGORIES[best] if best is not None else 'NESSUN EVENTO NEL PERIODO',
+            primary=picks[0],backup1=picks[1],backup2=picks[2]))
         index.append(f'<li><a href="{slug(name)}/index.html">{html.escape(name)}</a> - {len(group)} eventi</li>')
         parts=['<!doctype html><html lang="it"><meta charset="utf-8"><title>'+html.escape(name)+'</title>'+style,
                '<h1>'+html.escape(name)+f'</h1><p>Massima quota teorica dal sito: <b>{hmax:.1f}°</b>.</p><p>Schede degli eventi, non immagini del campo stellare. '
@@ -220,11 +227,15 @@ def write_reports(out,events,targets,rejections,manifest):
         parts.append('</html>');(folder/'index.html').write_text('\n'.join(parts))
     (archive/'riepilogo_target.json').write_text(json.dumps(target_summaries,indent=2,ensure_ascii=False))
     with (archive/'riepilogo_target.csv').open('w',newline='',encoding='utf-8') as f:
-        w=csv.DictWriter(f,fieldnames=['name','max_altitude_theoretical_deg','events','practical_candidates','best_astronomical_class']);w.writeheader();w.writerows(target_summaries)
+        w=csv.DictWriter(f,fieldnames=['name','max_altitude_theoretical_deg','geometry_class','events',
+                                       'practical_candidates','best_astronomical_class','primary','backup1','backup2'])
+        w.writeheader();w.writerows(target_summaries)
     (archive/'index.html').write_text('<!doctype html><html lang="it"><meta charset="utf-8"><title>Archivio UAN</title>'+style+
                                      '<h1>Archivio completo</h1><ul>'+''.join(index)+'</ul><h2>Target esclusi</h2><pre>'+html.escape(json.dumps(rejections,indent=2,ensure_ascii=False))+'</pre></html>')
     summary='\n'.join(f'{c}: {counts[c]} totali; {practical[c]} in fascia pratica' for c in CATEGORIES)
-    target_text='\n'.join(f'{t["name"]}: quota teorica {t["max_altitude_theoretical_deg"]:.1f}°; {t["practical_candidates"]} candidati pratici; migliore classe astronomica {t["best_astronomical_class"]}' for t in target_summaries)
+    target_text='\n'.join(f'{t["name"]}: geometria {t["geometry_class"]} (quota teorica {t["max_altitude_theoretical_deg"]:.1f}°); '
+                          f'{t["practical_candidates"]} candidati pratici; PRIMARY {t["primary"] or "nessuno"}; '
+                          f'BACKUP1 {t["backup1"] or "nessuno"}; BACKUP2 {t["backup2"] or "nessuno"}' for t in target_summaries)
     readme=f'''UAN TRANSIT PLANNER v1
 Esecuzione UTC: {manifest['created_utc']}
 Periodo dei centri di transito: {manifest['start']} incluso, {manifest['end_exclusive']} escluso, in {p['timezone']}.
@@ -316,16 +327,30 @@ penalità se contemporaneamente sopra orizzonte, nel transito visibile,
 illuminazione >= {p['moon_bright_percent']}% e distanza <= {p['moon_close_deg']}°.
 Una Luna brillante lontana non è automaticamente penalizzata.
 
-CLASSI (euristiche modificabili, nessuno score compensativo)
-Geometria teorica massima = 90 - abs(latitudine - declinazione J2000).
-Sotto {p['severe_altitude_deg']}°: target non consigliato da questo sito.
-Transito con zero copertura o quota massima evento sotto soglia grave: evento non consigliato.
-Dati mancanti, TTV, errore centro > {p['maximum_uncertainty_minutes']} min, transito parziale,
-centro <{p['preferred_altitude_deg']}° o baseline su un lato <{p['minimum_baseline_minutes']} min: da valutare.
-Completo con centro >= quota desiderata ma parti basse o Luna critica: alternative.
-Completo tutto sopra quota desiderata e controlli precedenti superati: prima scelta.
+POLICY UAN TRANSIT PLANNER v1 (soglie configurabili nel profilo, nessuno score compensativo)
+Geometria teorica massima = 90 - abs(latitudine - declinazione J2000). Etichetta target:
+sotto {p['severe_altitude_deg']}° NON CONSIGLIATO DAL SITO; fino a {p['visibility_altitude_deg']}° MOLTO DIFFICILE;
+fino a {p['preferred_altitude_deg']}° MARGINALE; fino a {p['excellent_altitude_deg']}° BUONO; oltre MOLTO FAVOREVOLE.
+L'etichetta descrive il target, non l'evento: 25° restano 25° reali anche se sono il massimo possibile.
+Evento: copertura transito <{p['transit_operational_percent']:.0f}% -> non operativo (DA VALUTARE);
+90-99% valido (ALTERNATIVE); 100% (tolleranza {p['complete_tolerance_seconds']} s) ideale.
+Baseline osservabile per lato, denominatore = finestra richiesta (1 h + 1 sigma): <{p['baseline_weak_percent']:.0f}% debole
+(DA VALUTARE); {p['baseline_weak_percent']:.0f}-{p['baseline_good_percent']:.0f}% accettabile (ALTERNATIVE); >= {p['baseline_good_percent']:.0f}% buona.
+Centro transito sotto {p['preferred_altitude_deg']}°: DA VALUTARE. Le quote sono assolute, mai relative al massimo del target.
+Dati mancanti, TTV, errore centro > {p['maximum_uncertainty_minutes']} min, residuo temporale > 2 s: DA VALUTARE.
+Luna: penalita' solo nella zona critica (illuminazione >= {p['moon_bright_percent']:.0f}%, distanza <= {p['moon_close_deg']:.0f}°,
+sopra orizzonte durante il transito osservabile); una Luna brillante ma lontana non scarta l'evento.
+PRIMA SCELTA: transito completo, baseline >= {p['baseline_good_percent']:.0f}% per lato, tutto sopra {p['preferred_altitude_deg']}°, Luna ed errori nei limiti.
+NON CONSIGLIATO: collo di bottiglia strutturale (geometria target) o evento senza transito utile al buio.
 Magnitudine e profondità sono esposte, senza inventare una sensibilità dello strumento.
-Gli eventi sono ordinati per classe e data, senza ranking fotometrico non calibrato.
+
+SCORE SECONDARIO 0-100 (solo ordinamento interno, mai sopra le classi):
+30% copertura transito + 15% baseline (minimo per lato) + 20% quota centro (saturazione a {p['excellent_altitude_deg']:.0f}°)
++ 10% Luna (penalita' continua: (illuminazione/100)*(1-distanza/180); Luna sotto orizzonte = nessuna penalita')
++ 10% magnitudine (V/G da 8 a 16) + 10% profondità (saturazione a 20 ppt) + 5% praticità oraria.
+Valori mancanti di magnitudine/profondità: 0,5 neutro, nessun credito inventato.
+PRIMARY, BACKUP1, BACKUP2: per ogni target i primi tre eventi pratici ordinati per classe
+(operativa prima) e poi per score decrescente; indicati in riepilogo_target.csv e nel LEGGIMI.
 
 LIMITI COMPUTAZIONALI
 Per errori molto grandi la finestra calcolata per lato è limitata a min(P/2, 24 ore),

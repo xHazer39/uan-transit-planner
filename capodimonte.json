@@ -13,9 +13,12 @@
   "session_end": "01:00",
   "sampling_seconds": 120,
   "preferred_altitude_deg": 30,
+  "excellent_altitude_deg": 40,
   "severe_altitude_deg": 15,
   "complete_tolerance_seconds": 1,
-  "minimum_baseline_minutes": 30,
+  "transit_operational_percent": 90,
+  "baseline_weak_percent": 50,
+  "baseline_good_percent": 80,
   "maximum_uncertainty_minutes": 10,
   "moon_bright_percent": 70,
   "moon_close_deg": 40

@@ -86,6 +86,32 @@ def nautical_start(evening,latitude,longitude,height,zone_name,twilight):
     return windows[0][0] if windows else None
 
 
+def geometry_label(max_alt,p):
+    """Policy UAN v1, phase 1: structural geometry of the target from this site."""
+    if max_alt < p['severe_altitude_deg']: return 'NON CONSIGLIATO DAL SITO'
+    if max_alt < p['visibility_altitude_deg']: return 'MOLTO DIFFICILE'
+    if max_alt < p['preferred_altitude_deg']: return 'MARGINALE'
+    if max_alt < p['excellent_altitude_deg']: return 'BUONO'
+    return 'MOLTO FAVOREVOLE'
+
+
+def score(e,p):
+    """Secondary 0-1 ordering score (policy UAN v1). Never overrides the category:
+    a non-recommended event keeps its class no matter how high the score is."""
+    if e['moon_critical']:
+        moon=0.0
+    elif e['moon_up_during_transit']:
+        moon=1.0-(e['moon_illumination_percent']/100)*(1-min(e['moon_separation_deg'],180)/180)
+    else:
+        moon=1.0
+    mag=e['magnitude']; mag_s=0.5 if mag is None else min(max((16.0-mag)/8.0,0.0),1.0)
+    dep=e['depth_ppt']; dep_s=0.5 if dep is None else min(dep/20.0,1.0)
+    base=min(e['baseline_before_percent'],e['baseline_after_percent'])/100.0
+    alt=min(max(e['altitude_mid_deg'],0.0),p['excellent_altitude_deg'])/p['excellent_altitude_deg']
+    return (0.30*e['transit_percent']/100.0+0.15*base+0.20*alt+0.10*moon
+            +0.10*mag_s+0.10*dep_s+0.05*e['practical_transit_percent']/100.0)
+
+
 def classify(e,p):
     if e['max_altitude_theoretical_deg'] < p['severe_altitude_deg']:
         return 'NON CONSIGLIATO','Target basso per geometria del sito'
@@ -100,17 +126,26 @@ def classify(e,p):
     if e['uncertainty_minutes'] > p['maximum_uncertainty_minutes']:
         return 'DA VALUTARE','Incertezza temporale elevata'
     lost=e['duration_minutes']*60*(1-e['transit_percent']/100)
-    if lost>p['complete_tolerance_seconds']:
-        return 'DA VALUTARE',f'Transito parziale: {e["transit_percent"]:.1f}% sopra soglia e al buio'
+    complete=lost<=p['complete_tolerance_seconds']
+    baseline=min(e['baseline_before_percent'],e['baseline_after_percent'])
+    if e['transit_percent'] < p['transit_operational_percent']:
+        return 'DA VALUTARE',f'Transito parziale: {e["transit_percent"]:.0f}% osservabile, sotto il minimo operativo ({p["transit_operational_percent"]:.0f}%)'
+    if baseline < p['baseline_weak_percent']:
+        return 'DA VALUTARE',f'Baseline debole: {baseline:.0f}% osservabile su almeno un lato'
     if e['altitude_mid_deg'] < p['preferred_altitude_deg']:
         return 'DA VALUTARE','Centro del transito sotto la quota desiderata'
-    if min(e['baseline_before_minutes'],e['baseline_after_minutes']) < p['minimum_baseline_minutes']:
-        return 'DA VALUTARE','Baseline insufficiente su almeno un lato'
+    issues=[]
+    if not complete:
+        issues.append(f'transito {e["transit_percent"]:.0f}% (non completo)')
+    if baseline < p['baseline_good_percent']:
+        issues.append(f'baseline {baseline:.0f}% (sotto {p["baseline_good_percent"]:.0f}%)')
     if e['moon_critical']:
-        return 'ALTERNATIVE','Transito completo; Luna luminosa, vicina e sopra orizzonte'
+        issues.append('Luna luminosa, vicina e sopra orizzonte')
     if e['altitude_min_deg'] < p['preferred_altitude_deg']:
-        return 'ALTERNATIVE','Transito completo; una parte sotto la quota desiderata'
-    return 'PRIMA SCELTA','Transito completo sopra quota desiderata; baseline, Luna ed errori nei limiti'
+        issues.append('parte del transito sotto la quota desiderata')
+    if not issues:
+        return 'PRIMA SCELTA','Transito completo, baseline buona, quota e Luna nei limiti'
+    return 'ALTERNATIVE','Valido con compromessi: '+'; '.join(issues)
 
 
 def analyze(raw,target,p,ground=None):
@@ -207,5 +242,6 @@ def analyze(raw,target,p,ground=None):
            reference=target['comments'])
     e['tapir_discrepancy_reason']=('Ricalcolo indipendente degli intervalli a quota 0°, Sole <= soglia; '
                                  'TAPIR usa estremi e arrotondamenti diversi' if e['tapir_anomaly'] else '')
+    e['score']=round(100*score(e,p),1)
     e['category'],e['reason']=classify(e,p)
     return e

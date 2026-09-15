@@ -280,10 +280,14 @@ def validate_profile(p):
     for k,lo,hi in [('latitude',-90,90),('longitude',-180,180),('height_m',-500,10000),
                     ('twilight_deg',-30,-1),('visibility_altitude_deg',0,89),('baseline_hours',0.5,24),
                     ('sampling_seconds',10,300),('preferred_altitude_deg',0,90),('severe_altitude_deg',0,90),
-                    ('complete_tolerance_seconds',0,60),('minimum_baseline_minutes',0,1440),
+                    ('excellent_altitude_deg',0,90),('complete_tolerance_seconds',0,60),
+                    ('transit_operational_percent',50,100),('baseline_weak_percent',0,100),
+                    ('baseline_good_percent',0,100),
                     ('maximum_uncertainty_minutes',0,1440),('moon_bright_percent',0,100),('moon_close_deg',0,180)]:
         v=number(p.get(k))
         if v is None or not lo<=v<=hi: raise ValueError(f'Profilo: {k} deve essere fra {lo} e {hi}')
+    if p['baseline_weak_percent']>p['baseline_good_percent']:
+        raise ValueError('Profilo: baseline_weak_percent non può superare baseline_good_percent')
     if not isinstance(p['extend_uncertainty'],bool): raise ValueError('extend_uncertainty deve essere booleano')
     ZoneInfo(p['timezone'])
     for k in ('session_start','session_end'):

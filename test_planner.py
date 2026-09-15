@@ -19,19 +19,42 @@ class PlannerChecks(unittest.TestCase):
             self.assertEqual(datetime.fromtimestamp(end,z).utcoffset().total_seconds(),offset*3600)
             self.assertLess(start,t.timestamp());self.assertGreater(end,t.timestamp())
     def test_classification(self):
-        p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'complete_tolerance_seconds':1,
-           'minimum_baseline_minutes':30,'maximum_uncertainty_minutes':10}
+        from observing import score, geometry_label
+        p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
+           'visibility_altitude_deg':20,'complete_tolerance_seconds':1,'transit_operational_percent':90,
+           'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10}
         e=dict(max_altitude_theoretical_deg=55,altitude_min_deg=31,altitude_mid_deg=40,
                altitude_max_deg=45,transit_percent=100,duration_minutes=120,
-               baseline_before_minutes=60,baseline_after_minutes=60,uncertainty_minutes=1,
-               moon_critical=False,magnitude=11,depth_ppt=12,ttv=False)
+               baseline_before_minutes=60,baseline_after_minutes=60,
+               baseline_before_percent=100,baseline_after_percent=100,
+               practical_transit_percent=100,uncertainty_minutes=1,
+               moon_critical=False,magnitude=11,depth_ppt=12,ttv=False,
+               moon_up_during_transit=False,moon_illumination_percent=5,moon_separation_deg=120)
         self.assertEqual(classify(e,p)[0],'PRIMA SCELTA')
         self.assertEqual(classify(dict(e,altitude_mid_deg=22,altitude_min_deg=8),p)[0],'DA VALUTARE')
         self.assertNotIn('geometria del sito',classify(dict(e,altitude_mid_deg=22,altitude_min_deg=8),p)[1])
         self.assertIn('geometria del sito',classify(dict(e,max_altitude_theoretical_deg=7),p)[1])
         self.assertEqual(classify(dict(e,uncertainty_minutes=None),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,moon_critical=None),p)[0],'DA VALUTARE')
-        self.assertEqual(classify(dict(e,baseline_after_minutes=0),p)[0],'DA VALUTARE')
+        self.assertEqual(classify(dict(e,baseline_after_percent=0),p)[0],'DA VALUTARE')
+        # Policy v1: 90-99% transit is operational -> ALTERNATIVE, not DA VALUTARE.
+        self.assertEqual(classify(dict(e,transit_percent=95),p)[0],'ALTERNATIVE')
+        self.assertEqual(classify(dict(e,transit_percent=89),p)[0],'DA VALUTARE')
+        # Baseline percentages: 50-79 acceptable, <50 weak.
+        self.assertEqual(classify(dict(e,baseline_after_percent=60),p)[0],'ALTERNATIVE')
+        self.assertEqual(classify(dict(e,baseline_after_percent=40),p)[0],'DA VALUTARE')
+        # Score is secondary and altitude is capped: bright+deep at 8 degrees cannot score high.
+        perfect=round(100*score(dict(e,magnitude=8,depth_ppt=20),p),1)
+        self.assertEqual(perfect,100.0)
+        low=score(dict(e,altitude_mid_deg=8,transit_percent=95),p)
+        self.assertAlmostEqual(low,0.30*0.95+0.15+0.20*8/40+0.10+0.10*(16-11)/8+0.10*12/20+0.05)
+        self.assertLess(100*low,86.0)
+        # Target geometry labels (phase 1).
+        self.assertEqual(geometry_label(10,p),'NON CONSIGLIATO DAL SITO')
+        self.assertEqual(geometry_label(18,p),'MOLTO DIFFICILE')
+        self.assertEqual(geometry_label(25,p),'MARGINALE')
+        self.assertEqual(geometry_label(42,p),'BUONO')
+        self.assertEqual(geometry_label(55,p),'MOLTO FAVOREVOLE')
 
 
 
