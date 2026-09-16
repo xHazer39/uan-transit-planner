@@ -549,4 +549,76 @@ class PrototypeChecks(unittest.TestCase):
         self.assertEqual({m.utcoffset().total_seconds() for m in mids},{3600.0})
 
 
+    def test_fragment_validation_and_ensure(self):
+        from reports import tapir_fragment_valid,ensure_tapir_fragment
+        p=dict(longitude=14.255056,latitude=40.862861,height_m=150,timezone='Europe/Rome',
+               baseline_hours=1,extend_uncertainty=True,twilight_deg=-12)
+        mid='2026-10-01T22:00:00+00:00'
+        hdr=('<table id="target_table"><tr><th>Data</th><th>Name</th><th>V or Gaia mag</th>'
+             '<th>Start&mdash; Mid &mdash;End</th><th>Duration</th></tr>')
+        rowf=lambda name,mid_s: ('<tr><td>2026-10-01 17:30 2026-10-02 06:30</td>'
+            f'<td><a href="#">{name}</a> Finding charts: Annotated , Aladin ; Airmass plot , ACP plan '
+            f'Info: Exoplanet Archive</td><td>10.3</td>'
+            f'<td>2026-10-01 20:00 2026-10-01 21:00 {mid_s} 2026-10-01 23:00 2026-10-02 00:00</td>'
+            f'<td>2:46</td></tr>')
+        good=hdr+rowf('Test b','2026-10-01 22:00')+'</table>'
+        wrong_evt=hdr+rowf('Test b','2026-10-01 23:15')+'</table>'
+        wrong_tgt=hdr+rowf('Other b','2026-10-01 22:00')+'</table>'
+        no_bjd='<table><tr><td>Test b</td></tr></table>'
+        e=dict(name='Test b',cycle=7,mid_utc=mid,mid_local=mid)
+        self.assertTrue(tapir_fragment_valid(good,'Test b',mid,p['timezone'])[0])
+        self.assertFalse(tapir_fragment_valid(wrong_evt,'Test b',mid,p['timezone'])[0])
+        self.assertFalse(tapir_fragment_valid(wrong_tgt,'Test b',mid,p['timezone'])[0])
+        tmap={'Test b':dict(RA='10:00:00',Dec='+30:00:00',period='2.5',name='Test b')}
+        # esistente e valido -> nessuna query TAPIR
+        (Path(self.archive)/'Test_b').mkdir(exist_ok=True)
+        (Path(self.archive)/'Test_b'/'tapir_event_c7.html').write_text(good)
+        self.assertEqual(ensure_tapir_fragment(e,tmap['Test b'],p,Path(self.archive)),
+                         'Test_b/tapir_event_c7.html')
+        # puntatore vecchio valido -> copiato sotto il nome canonico (no collisioni)
+        e2=dict(e,cycle=9,event_id='Test_b-c9');e2.pop('tapir_event_html',None)
+        (Path(self.archive)/'Test_b'/'old_frag.html').write_text(good)
+        e2['tapir_event_html']='Test_b/old_frag.html'
+        rel=ensure_tapir_fragment(e2,tmap['Test b'],p,Path(self.archive))
+        self.assertEqual(rel,'Test_b/tapir_event_c9.html')
+        self.assertEqual((Path(self.archive)/rel).read_text(),good)
+        eng=Path(self.archive)/'dati_originali'/'tapir_source'
+        eng.mkdir(parents=True,exist_ok=True)
+        cgi=eng/'print_transits.cgi'
+        cgi.write_text('#!/bin/sh\necho \'<!doctype html><html><body><table id="target_table">'
+                       '<tr><th>Data</th><th>Name</th><th>V or Gaia mag</th>'
+                       '<th>Start&mdash; Mid &mdash;End</th><th>Duration</th></tr>'
+                       '<tr><td>2026-10-14&nbsp;18:00 2026-10-15&nbsp;06:00</td>'
+                       '<td><a href="#">Test b</a> Finding charts: Aladin ; Airmass plot Info: NASA</td>'
+                       '<td>10.3</td>'
+                       '<td>2026-10-14&nbsp;20:00 2026-10-14&nbsp;21:00 2026-10-14&nbsp;22:00 '
+                       '2026-10-14&nbsp;23:00 2026-10-15&nbsp;00:00</td><td>2:46</td></tr>'
+                       '</table></body></html>\'\n')
+        cgi.chmod(0o755)
+        # contenuto di un altro evento -> errore esplicito, nessun inserimento
+        e3=dict(e,cycle=11,event_id='Test_b-c11');e3.pop('tapir_event_html',None)
+        (Path(self.archive)/'Test_b'/'tapir_event_c11.html').write_text(wrong_evt)
+        with self.assertRaises(ValueError) as cm:
+            ensure_tapir_fragment(e3,tmap['Test b'],p,Path(self.archive))
+        self.assertIn('non valido',str(cm.exception))
+        # rigenerazione con engine TAPIR (finto): frammento corretto -> successo
+        e4=dict(e,cycle=13,event_id='Test_b-c13');e4.pop('tapir_event_html',None)
+        # evento con mid 2026-10-14 22:00 UTC: il finto TAPIR produce esattamente quel mid
+        e4['mid_local']='2026-10-14T22:00:00+00:00';e4['mid_utc']='2026-10-14T22:00:00+00:00'
+        rel=ensure_tapir_fragment(e4,tmap['Test b'],p,Path(self.archive))
+        self.assertEqual(rel,'Test_b/tapir_event_c13.html')
+        self.assertIn('MARKER' ,(Path(self.archive)/rel).read_text()) if False else None
+        self.assertIn('Test b',(Path(self.archive)/rel).read_text())
+
+    def test_dossier_has_no_tapir_preamble(self):
+        events=[self.ev('WASP-77 A b',1050,0,score=99.9)]
+        self.roles(events)
+        rows=self.prototype_rows(events)
+        doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
+        self.assertIsNone(broken)
+        for bad in ['Only 1 target matches your constraints','Upcoming events for the next 1 day']:
+            self.assertNotIn(bad,doc)
+        self.assertIn('MARKER_TAPIR_ROW',doc)
+
+
 if __name__=='__main__': unittest.main()

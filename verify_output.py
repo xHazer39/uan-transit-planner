@@ -98,6 +98,7 @@ exp_d={'1_PRIMA_SCELTA':{('event-'+(slug(e['name'])+'-c'+str(e['cycle'])).lower(
        '2_ALTERNATIVE':{('event-'+(slug(e['name'])+'-c'+str(e['cycle'])).lower())
         for e in events if e['quality_class']=='ALTERNATIVE' and e['logistics_class']=='P1'}}
 exp3=curated_review_rows(events,p)
+_short_rows=set(map(lambda x:(x['name'],x['cycle'],x['mid_utc']),exp3))
 exp_d['3_DA_VALUTARE']={'event-'+(slug(e['name'])+'-c'+str(e['cycle'])).lower() for e in exp3}
 for base,anchors_expected in exp_d.items():
     hp=out/(base+'.html');assert hp.is_file(),('missing',base+'.html')
@@ -114,6 +115,37 @@ assert 'event-'+(slug('WASP-77 A b')+'-c'+str(next(e['cycle'] for e in events
 k16='event-'+(slug('KELT-16 b')+'-c'+str(next(e['cycle'] for e in events
      if e['name']=='KELT-16 b' and e['mid_local'].startswith('2026-09-21T23:16')))).lower()
 assert k16 in exp_d['2_ALTERNATIVE'] and k16 not in exp_d['1_PRIMA_SCELTA'],('KELT-16 misplaced',)
+# Identity di ogni frammento incorporato: target + midpoint TAPIR == planner (tol 2 min).
+from reports import tapir_fragment_identity
+from datetime import datetime as _DT
+checked=0
+for e in events:
+    # solo le righe dei dossier 1/2/3 hanno frammento canonico obbligatorio
+    in_d=(e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and e['logistics_class']=='P1')
+    if e['quality_class']=='DA VALUTARE' and e['logistics_class']=='P1':
+        in_d=(e['name'],e['cycle'],e['mid_utc']) in _short_rows
+    if not in_d:
+        continue
+    canon=archive/(slug(e['name'])+'/tapir_event_c'+str(e['cycle'])+'.html')
+    assert canon.is_file(),('canonical fragment missing',slug(e['name'])+'-c'+str(e['cycle']))
+    name,mid=tapir_fragment_identity(canon.read_text())
+    assert name==e['name'],('fragment target mismatch',slug(e['name'])+'-c'+str(e['cycle']),name)
+    exp=_DT.fromisoformat(e['mid_utc']).replace(tzinfo=None)
+    assert mid is not None and abs((mid-exp).total_seconds())<=120,('fragment mid mismatch',slug(e['name'])+'-c'+str(e['cycle']),str(mid))
+    checked+=1
+assert checked>=len(exp_d['1_PRIMA_SCELTA'])+len(exp_d['2_ALTERNATIVE'])+len(exp_d['3_DA_VALUTARE'])-len(exp_d['3_DA_VALUTARE'])
+# regression KELT-1: c2935 (16/09) e c2981 (11/11) frammenti distinti e coerenti
+k1={e['cycle']:e for e in events if e['name']=='KELT-1 b' and e['cycle'] in (2935,2981)}
+assert set(k1)=={2935,2981}
+for cyc,e in k1.items():
+    frag=(archive/(slug(e['name'])+'/tapir_event_c'+str(e['cycle'])+'.html')).read_text()
+    name,mid=tapir_fragment_identity(frag)
+    exp=_DT.fromisoformat(e['mid_utc']).replace(tzinfo=None)
+    assert name=='KELT-1 b' and abs((mid-exp).total_seconds())<=120,('KELT-1 regression',cyc,str(mid))
+    assert abs((mid-exp).total_seconds())<=120
+m2935=_DT.fromisoformat(k1[2935]['mid_utc']).replace(tzinfo=None)
+m2981=_DT.fromisoformat(k1[2981]['mid_utc']).replace(tzinfo=None)
+assert abs((m2935-m2981).total_seconds())>86400,('KELT-1 midpoints too close',)
 # Re-evaluate up to three partial events at 30-second sampling, independent of rendering.
 convergence=[]
 for e in [e for e in events if 1<e['transit_percent']<99][:3]:

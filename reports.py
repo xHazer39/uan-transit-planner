@@ -10,6 +10,7 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 from datetime import datetime,timedelta
+from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -17,7 +18,7 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 from observing import geometry_label
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord,EarthLocation
 import astropy.units as u
 from astropy.time import Time
 
@@ -259,8 +260,9 @@ def run_perl(script,cwd,args=None,query=None):
     return proc
 
 
-def tapir_event_html(t,p,e,engine,raw,folder,idx):
-    """One ground TAPIR HTML query bounded to a single event: table for the category PDFs."""
+def tapir_event_html(t,p,e,engine,raw,folder,idx=None):
+    """One ground TAPIR HTML query bounded to a single event: table for the dossiers.
+    Fragment names are deterministic per event (cycle): no cross-generation collisions."""
     mid_local=datetime.fromisoformat(e['mid_local'])
     evening=mid_local.date() if mid_local.hour>=12 else mid_local.date()-timedelta(days=1)
     days=1 if float(t['period'])<2.2 else 2
@@ -272,15 +274,94 @@ def tapir_event_html(t,p,e,engine,raw,folder,idx):
                minimum_depth=-999,maximum_V_mag=99,minimum_priority=0,twilight=p['twilight_deg'],
                target_string='^'+re.escape(t['name'])+'$',max_airmass=4,single_object=0,space=0,print_html=1)
     proc=run_perl(engine/'print_transits.cgi',engine,query=query)
-    name=f'{slug(t["name"])}_event_{idx:04d}'
+    name=f'{slug(t["name"])}_event_c{e["cycle"]}'
     (raw/(name+'.txt')).write_text(proc.stdout)
     (raw/(name+'.log')).write_text(proc.stderr)
     if proc.returncode: raise ValueError('TAPIR fallito (evento): '+proc.stderr[-200:])
     body=proc.stdout[proc.stdout.lower().find('<!doctype'):] if '<!doctype' in proc.stdout.lower() else proc.stdout[proc.stdout.lower().find('<html'):]
     body=re.sub(r'<head[^>]*>',lambda m:m.group(0)+'<base href="'+BASE+'">',body,count=1,flags=re.I)
-    (folder/f'tapir_event_{idx:04d}.html').write_text(body)
-    return f'{folder.name}/tapir_event_{idx:04d}.html'
+    (folder/f'tapir_event_c{e["cycle"]}.html').write_text(body)
+    return f'{folder.name}/tapir_event_c{e["cycle"]}.html'
 
+
+
+def tapir_fragment_identity(frag_html):
+    """(target, mid_utc_naive) estratti dalla riga TAPIR autentica, o (None,None).
+    La colonna Start-Mid-End e' individuata dall'header della tabella; il midpoint
+    e' il terzo orario della cella (sugg-start, start, MID, end, sugg-end)."""
+    headers=[]
+    for row in re.findall(r'<tr[^>]*>.*?</tr>',frag_html,re.S):
+        ths=re.findall(r'<th[^>]*>(.*?)</th>',row,re.S)
+        if ths:
+            headers=ths
+            break
+    col=None
+    for i,th in enumerate(headers):
+        if 'Start' in th and 'Mid' in th:
+            col=i
+            break
+    if col is None:
+        return None,None
+    for row in re.findall(r'<tr[^>]*>.*?</tr>',frag_html,re.S):
+        if 'Finding charts' not in row:
+            continue
+        cells=re.findall(r'<td[^>]*>(.*?)</td>',row,re.S)
+        if col>=len(cells):
+            continue
+        cell=cells[col].replace('&nbsp;',' ')
+        dts=re.findall(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}',cell)
+        if len(dts)<3:
+            continue
+        nm=re.search(r'<a[^>]*>([^<]+)</a>',row)
+        return (nm.group(1).strip() if nm else None,
+                datetime.strptime(dts[2],'%Y-%m-%d %H:%M'))
+    return None,None
+
+
+def tapir_fragment_valid(frag_html,target_name,expected_mid_utc,tz,tol_s=120):
+    """Content check del frammento TAPIR aggregato: il target e il midpoint
+    (orari TAPIR convertiti in Europe/Rome) devono coincidere con l'evento
+    del planner entro tol_s secondi. Restituisce (ok, motivo)."""
+    name,mid=tapir_fragment_identity(frag_html)
+    if name is None or mid is None:
+        return False,'riga evento TAPIR (target/midpoint) non trovata nel frammento'
+    if name!=target_name:
+        return False,f'target TAPIR "{name}" != planner "{target_name}"'
+    expected=datetime.fromisoformat(expected_mid_utc).replace(tzinfo=None)
+    delta=abs((mid-expected).total_seconds())
+    if delta>tol_s:
+        return False,f'midpoint TAPIR discordante di {delta:.0f} s'
+    return True,''
+
+
+def ensure_tapir_fragment(e,t,p,archive):
+    """Canonical, collision-free fragment for one dossier row:
+    {slug}/tapir_event_c{cycle}.html. Strategies: (1) canonical path already valid,
+    (2) stored pointer still valid -> copy it under the canonical name,
+    (3) regenerate via a presentation-only TAPIR query. Every candidate is
+    content-validated (planner target name + midpoint TAPIR in Europe/Rome within
+    tolerance); on failure the invalid fragment is NEVER embedded - explicit error.
+    Never mutates scientific fields."""
+    rel=f"{slug(e['name'])}/tapir_event_c{e['cycle']}.html"
+    path=archive/rel
+    tz=ZoneInfo(p['timezone'])
+    engine=archive/'dati_originali'/'tapir_source'
+    reason='frammento assente'
+    for attempt in range(3):
+        if attempt==1:
+            stored=e.get('tapir_event_html')
+            if stored and (archive/stored).is_file() and (archive/stored) != path:
+                shutil.copyfile(archive/stored,path)
+        if attempt==2:
+            tapir_event_html(t,p,e,engine,archive/'dati_originali',archive/slug(e['name']))
+        if path.is_file():
+            ok,reason=tapir_fragment_valid(path.read_text(),e['name'],e['mid_utc'],tz)
+            if ok:
+                return rel
+        if attempt==2:
+            raise ValueError(f'Frammento TAPIR non valido per {e["event_id"]} ({reason}); '
+                             'nessun frammento sbagliato inserito nel dossier')
+    raise ValueError('irraggiungibile')
 
 
 def calendar_rows(events,quality):
@@ -382,7 +463,7 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
     rows must already be the chosen chronological subset. Presentation only: never mutates
     events, never reclassifies, never re-runs TAPIR. Returns (html, first_broken_event_id)."""
     idx=['<table class="idx"><tr><th>Data</th><th>Target</th><th>Centro locale</th><th>Ruolo</th></tr>']
-    body=[];assets='';intro='';first=True;current=None
+    body=[];assets='';first=True;current=None
     for n,e in enumerate(rows):
         mid=datetime.fromisoformat(e['mid_local'])
         anchor='event-'+e['event_id'].lower()
@@ -403,7 +484,7 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
             return None,e['event_id']
         a,i,t=pieces
         if first:
-            assets+=a;intro+=i;first=False
+            assets+=a;first=False
         # namespace every HTML id of the fragment: no duplicate ids in the aggregated page
         t=re.sub(r'\bid="([^"]*)"',lambda m:f'id="ev{n}-{m.group(1)}"',t)
         body.append('<p class="rolehdr"><b>'+html.escape(e['name'])+'</b> — '+e['display_role']
@@ -424,7 +505,7 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
     tapir_band='<h2 class="tapirband">OUTPUT TAPIR ORIGINALE — orari della tabella TAPIR: UTC</h2>'
     body_html=(cover
                +'<h2 class="monthhdr">Indice cronologico (ora locale '+html.escape(tz)+')</h2>'
-               +'\n'.join(idx)+disclaimer+tapir_band+intro+'\n'.join(body))
+               +'\n'.join(idx)+disclaimer+tapir_band+'\n'.join(body))
     doc=_HEAD.format(title=title,assets=assets+DOSSIER_CSS,body=body_html)
     return doc,None
 
@@ -516,20 +597,16 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
               ('3_DA_VALUTARE','DA VALUTARE — shortlist di review',rev3,
                role_std+' · REVIEW = evento nella shortlist di review del target')]
     for base,cat,rows,legend in dossiers:
-        # Presentation assets: ensure every dossier row has its authentic TAPIR fragment.
-        # Purely presentational queries; classification/selection/score are never touched.
-        raw=archive/'dati_originali';engine=raw/'tapir_source'
-        tmap={t['name']:t for t in targets}
+        # Presentation assets: canonical collision-free fragment per row, content-validated
+        # (target + BJD_TDB midpoint vs planner event). Regeneration is presentation-only.
         made=0
-        for idx,e in enumerate(rows):
-            if e.get('tapir_event_html') and (archive/e['tapir_event_html']).is_file():
-                continue
-            t=tmap.get(e['name'])
-            if t is None or not engine.is_dir():
-                raise ValueError('Frammento TAPIR mancante e non rigenerabile per '+e['event_id'])
-            folder=archive/slug(e['name'])
-            e['tapir_event_html']=tapir_event_html(t,p,e,engine,raw,folder,idx)
-            made+=1
+        for e in rows:
+            t=target_map[e['name']]
+            old=e.get('tapir_event_html')
+            rel=ensure_tapir_fragment(e,t,p,archive)
+            if rel!=old: made+=1
+            e['tapir_event_html']=rel
+        if made: print(f'Dossier {base}: {made} frammenti rigenerati/redirectati',flush=True)
         doc,broken=tapir_dossier_document(rows,archive,tz,'UAN - '+cat,legend)
         if doc is None:
             raise ValueError('Frammento TAPIR mancante per '+broken

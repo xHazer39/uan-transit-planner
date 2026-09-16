@@ -202,6 +202,35 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
   nel documento, KELT-16 escluso da 1, frammento mancante = errore esplicito).
   verify_output PASS (esteso: set dossier, ID unici, anchor, regression).
 
+# BUGFIX framenti TAPIR nei dossier (16 settembre 2026, serata)
+
+- Bug reale segnalato e confermato: KELT-1 b c2935 (16/09 22:26) incorporava la
+  tabella TAPIR dell'evento 11/11 (c2981). Causa: nomi file frammento sequenziali
+  per-target riusati fra generazioni diverse (run annuale -> dossier-era -> lazy),
+  con puntatori stali nei risultati memorizzati.
+- Fix generale (downstream, nessuna policy/selection/score toccata):
+  1. naming deterministico per evento: tapir_event_c{cycle}.html (zero collisioni);
+  2. validazione obbligatoria dell'IDENTITA' di ogni frammento incorporato:
+     target TAPIR == target planner E midpoint TAPIR (Start-Mid-End, convertito
+     in Europe/Rome) == mid_local del planner entro 120 s;
+  3. mismatch -> rigenerazione presentazione-only (1 query TAPIR per evento);
+     secondo mismatch -> errore esplicito, frammento mai inserito;
+  4. preamboli query-level TAPIR ("Only 1 target matches...", "Upcoming events...")
+     rimossi dai dossier aggregati.
+- Nota tecnica TAPIR: la cella BJD_TDB stampata da TAPIR in alcune query singole
+  e' interna al suo output di ~7 min rispetto alla propria colonna Start-Mid-End;
+  la validazione usa quindi la colonna Start-Mid-End (coerente col planner entro
+  60 s) e NON la cella BJD. Il mid scientifico resta jd_utc_exact del planner
+  (residuo indipendente 0,04 s).
+- 41/41 test (nuovi: validazione identity, wrong target/mid, ensure su esistente/
+  puntatore/copertura rigenerazione con engine finto, assenza preamboli).
+- verify_output PASS (esteso: identity di TUTTI i 387 frammenti dei dossier,
+  regression KELT-1 c2935/c2981 distinti e coerenti, KELT-16 in 2 non in 1).
+- Dati scientifici invariati: snapshot 13264 eventi identico; risultati.json/csv e
+  0_CALENDARIO_OPERATIVO.* byte-identici. Dossier rigenerati: 52/61/92 pagine.
+- Nota: l'audit di riproducibilita' TAPIR ha sovrascritto i soli raw
+  KELT-1_b_event_c2935.txt/.log (timestamp CGI; riga scientifica identica).
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello
