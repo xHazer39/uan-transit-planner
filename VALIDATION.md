@@ -254,3 +254,12 @@ arcosecondo, conservato in warnings.log. Verificare effemeridi aggiornate prima 
   13264 eventi invariati campo per campo.
 - Nota: tag v2.1.2 (-> 8c79bc0) esiste nel repo ma non e' stato creato in
   questa sessione; segnalato, nessuna azione.
+
+# Release finale (16 settembre 2026)
+
+- Stato consegnato: policy UAN v2.1.1 stabile, calendario operativo + dossier TAPIR
+  autentici (1/2/3) + export Google Calendar (ICS/CSV) + archivio con provenance.
+- 41/41 test; verify_output PASS su tutti i pacchetti; dipendenze ridotte
+  (rimossi reportlab e pillow); renderer documentati in README.md.
+- README.md riscritto come documentazione definitiva: architettura 0/1/2/3/9,
+  policy completa, source-of-truth, provenance, limiti.

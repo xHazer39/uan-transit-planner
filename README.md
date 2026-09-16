@@ -1,12 +1,25 @@
-# UAN Transit Planner v1
+# UAN Transit Planner
 
-CLI personale per Kubuntu: TAPIR enumera i transiti; Astropy ricontrolla tempi,
-quote, notte, Luna e copertura; ReportLab crea PDF consultabili.
+CLI locale (Kubuntu) che pianifica le osservazioni di transiti esoplanetari:
+enumera i transiti con [TAPIR](https://github.com/elnjensen/Tapir), li **riclassifica e
+verifica in modo indipendente** con [Astropy](https://www.astropy.org/) secondo la
+**policy UAN v2.1.1**, e produce un pacchetto consegnabile alla sezione:
+calendario operativo, dossier nel formato TAPIR autentico, archivio completo e
+export per Google Calendar.
 
-## Installazione da GitHub
+**Principio architetturale:** il **planner è la source of truth** (inclusione,
+quality_class, logistics_class, score, PRIMARY/BACKUP/EXTRA, verifiche indipendenti).
+**TAPIR è solo il formato di presentazione dettagliato.** Nessun valore TAPIR viene
+usato per classificare o riselezionare eventi (in passato TAPIR ha prodotto valori
+impossibili, es. "915%": il planner ricalcola e segnala, non corregge a mano).
 
-Richiede Linux/Kubuntu, Git, `uv` e una copia funzionante di
-[TAPIR con le sue dipendenze Perl](https://github.com/elnjensen/Tapir#readme).
+---
+
+## Installazione
+
+Richiede Linux, Git, `uv`, Python 3.13 e una copia funzionante di
+[TAPIR con le sue dipendenze Perl](https://github.com/elnjensen/Tapir#readme)
++ `chromium` (per il rendering HTML→PDF dei dossier).
 
 ```bash
 git clone https://github.com/xHazer39/uan-transit-planner.git
@@ -16,132 +29,157 @@ uv pip install --python .venv/bin/python -r requirements.txt
 ./uan-transits plan "WASP-77 A b" --tapir ~/Downloads/Tapir
 ```
 
-Il launcher funziona dalla cartella clonata e attraverso link simbolici.
-I cataloghi e i pacchetti di osservazione vengono generati localmente; non sono inclusi nella repository.
+Dipendenze runtime: astropy, numpy, pyerfa (+ pyerfa/pyyaml transitive). Niente
+reportlab, niente database, niente web app.
 
 ## Uso
 
 ```bash
-uan-transits plan "WASP-77 A b" "CoRoT-11 b"
-uan-transits plan --targets targets.txt --site capodimonte --start 2026-09-15 --days 365
+uan-transits plan "WASP-77 A b" "CoRoT-11 b"                 # default: oggi, 365 giorni, Capodimonte
+uan-transits plan --targets targets.txt --days 365           # lista target da file (1 per riga)
 uan-transits plan "WASP-142 b" --session-start 17:45 --session-end 01:00
-uan-transits plan "HD 189733 b" --days 30 --min-altitude 25
+uan-transits plan "HD 189733 b" --days 30 --min-altitude 25 --max-v 14 --min-depth 5
+uan-transits plan "WASP-77 A b" --cache ARCHIVIO/9_ARCHIVIO_COMPLETO/dati_originali --offline
 ```
 
-Il comando è installato in `/home/gaetano/.local/bin/uan-transits`.
-Se la shell non lo trova: `/home/gaetano/uan-transit-planner/uan-transits`.
-`targets.txt`: un pianeta per riga, commenti con `#` su righe separate.
-Nomi canonici/varianti ortografiche e alias NASA sono accettati; una stella
-non viene automaticamente scambiata per un suo pianeta.
+- Ogni esecuzione crea una **nuova cartella** `GaetanoTrovato_<timestamp>/` + ZIP in `~/Downloads`
+  (mai sovrascritture).
+- Gli effemeridi vengono **aggiornati dal NASA Exoplanet Archive a ogni run**:
+  periodo/epoca scelti dalla stessa riga PS con BJD_TDB esplicito, minimizzando l'errore
+  propagato agli estremi della finestra. Durata/fotometria con fallback documentato su PSCompPars.
+- Cache solo esplicita via `--cache` (+ `--offline` per non scaricare nulla).
+- Exit code: 0 ok, 2 errore o nessun target utilizzabile.
 
-Oggi e 365 giorni sono i default. L'intervallo include i centri di transito
-fra mezzanotte locale della data iniziale (inclusa) e quella finale (esclusa).
-Ogni esecuzione crea una nuova cartella e ZIP in `~/Downloads`.
-`--output /percorso/nuovo` sceglie una cartella che **non deve esistere**.
+## Struttura dell'output (progressive disclosure)
 
-## Profilo
+```text
+GaetanoTrovato_<timestamp>/
+├── 0_CALENDARIO_OPERATIVO.pdf/html/csv/json   LIVELLO 1 — DECISIONE
+│       "Qual è la prossima osservazione buona o ottimale?"
+│       TUTTI gli eventi (PRIMA SCELTA o ALTERNATIVE) AND P1,
+│       ordine cronologico globale (Europe/Rome), layout compatto.
+│       Ruoli: PRIMARY/BACKUP1/BACKUP2 = le 3 raccomandazioni del target,
+│       EXTRA = altra occasione valida della stessa classe (non nascosta).
+│
+├── 1_PRIMA_SCELTA.pdf/html                    LIVELLO 2 — FINDING
+├── 2_ALTERNATIVE.pdf/html         dossier dettagliati nel FORMATO TAPIR AUTENTICO
+├── 3_DA_VALUTARE.pdf/html         (aggregazione dei frammenti TAPIR originali
+│       per evento, ordine cronologico, indice con anchor interni).
+│       1 = tutti i PRIMA SCELTA+P1 · 2 = tutti gli ALTERNATIVE+P1
+│       3 = shortlist di review per target (max 3, motivo visibile).
+│       Ogni frammento è VALIDATO: target TAPIR == target planner e midpoint
+│       TAPIR (colonna Start-Mid-End, convertita Europe/Rome) == mid_local
+│       planner entro 120 s; mismatch → rigenerazione, secondo mismatch → errore.
+│
+├── 0_LEGGIMI.txt                              come leggere il pacchetto
+├── 1_PRIMA_SCELTA.ics / .google_calendar.csv  export per Google Calendar (97 eventi)
+└── 9_ARCHIVIO_COMPLETO/                       LIVELLO 3 — AUDIT
+    ├── index.html                  tutti gli eventi, anche fuori serata e scartati
+    ├── risultati.csv / .json       metriche + reason_codes di ogni evento
+    ├── calendario_prima_scelta.*   export machine-readable del dossier 1
+    ├── 0_CALENDARIO_OPERATIVO.*    copia machine-readable della dashboard
+    ├── riepilogo_target.csv/.json  vista per target: geometria, PRIMARY/BACKUP, EXTRA
+    ├── manifest.json               provenance completa (vedi sotto)
+    ├── dati_originali/             cataloghi NASA, frammenti TAPIR raw, sorgente planner
+    └── <target>/                   tabelle TAPIR originali per target
+```
 
-Modifica `capodimonte.json`, oppure passa un altro JSON con `--site /percorso/profilo.json`.
-Coordinate verificate: [INAF](https://www.oacn.inaf.it/come-raggiungerci/).
+**Orari:** indice e calendario in ora locale (Europe/Rome, offset esplicito);
+le tabelle TAPIR incorporate sono in UTC e lo dicono. Le due fonti non si mescolano mai
+senza etichetta.
 
-- Copertura: Sole <= -12°, altezza >=20°.
-- Qualità desiderata: 30°; quota grave: 15°.
-- Baseline: un'ora per lato + errore del centro (1 sigma quando noto).
-- Errore centro >10 minuti o TTV: da valutare.
-- **Policy v2.1 — Luna a quattro livelli** (solo se sopra l'orizzonte):
-  ESTREMA (es. >=90% a <40°, o >=40% a <10°) → DA VALUTARE; ALTA e MODERATA →
-  max ALTERNATIVE; BASSA → nessuna penalità. La distanza può pesare più della fase.
-- Copertura transito: <90% → DA VALUTARE; 90-99.5% → max ALTERNATIVE; >=99.5% →
-  eleggibile PRIMA SCELTA. Baseline per lato: <50% debole, 50-80% accettabile, >=80% buona.
-- Orari pratici: crepuscolo nautico reale fino alle 01:00; la baseline può finire dopo.
-  Logistica separata dalla qualità: P1 transito intero fra 17:45 e 01:00, P2 parziale, P3 fuori serata.
-- Score secondario 0-100 (30% copertura, 20% baseline, 20% quota, 15% Luna, 10% affidabilità
-  temporale, 5% orario): ordina solo dentro la stessa classe; magnitudine e profondità non entrano.
-- Le soglie sono **euristiche configurabili, non regole ufficiali UAN**.
-- I PDF mostrano solo la **selezione per target** (PRIMARY + BACKUP1 + BACKUP2, con
-  diversificazione temporale >=7 giorni, fallback >=3); tutto il resto resta in archivio.
-- `riepilogo_target.csv`/`.json` riportano geometria del sito, candidati P1 e selezione.
+## Policy UAN v2.1.1 (gerarchia rigida)
 
-Gli orari ISO includono l'offset stagionale. La notte è identificata dal mezzogiorno locale
-precedente. Se si imposta un limite in un'ora autunnale ripetuta, si usa la seconda
-occorrenza; se il limite cade nell'ora primaverile inesistente, viene spostato avanti.
-I default 01:00 e inizio al crepuscolo non hanno queste ambiguità.
+Uno score alto **non compensa mai** un problema di livello superiore. Valutazione
+per evento, in ordine:
 
-`--max-v` e `--min-depth` sono filtri espliciti opzionali; nessun limite fotometrico di default.
-Gaia G non è V: con `--max-v` un target senza V verificabile viene escluso con motivazione.
-I valori mancanti non diventano zero. Senza modello della camera/telescopio
-il programma non garantisce misurabilità di una data profondità.
+| # | Controllo | Regola |
+|---|---|---|
+| 1 | Integrità temporale | residuo BJD > 2 s, TTV, σ centro > 10 min → `DA VALUTARE` |
+| 2 | Geometria del target | quota teorica < 15° → `NON CONSIGLIATO DAL SITO` (15-20 MOLTO DIFFICILE, 20-30 MARGINALE, 30-40 BUONO, ≥40 MOLTO FAVOREVOLE) |
+| 3 | Copertura transito | < 90% → `DA VALUTARE`; 90-99.5% → max `ALTERNATIVE`; ≥ 99.5% → eleggibile PRIMA SCELTA |
+| 4 | Baseline per lato | < 50% su un lato → `DA VALUTARE`; 50-79.9% → max `ALTERNATIVE`; ≥ 80% entrambi → eleggibile PRIMA SCELTA |
+| 5 | Quota evento (assoluta) | centro < 30° → `DA VALUTARE`; centro ≥ 30° ma minimo < 30° → max `ALTERNATIVE` |
+| 6 | Luna | ESTREMA → `DA VALUTARE`; ALTA/MODERATA → max `ALTERNATIVE`; BASSA → nessun downgrade |
+| 7 | Logistica (separata) | P1 = transito intero in fascia operativa; P2 = parziale; P3 = fuori serata (archivio scientifico) |
+| 8 | Score | solo ordinamento interno, mai promozione |
 
-## Cosa aprire
+**Luna (solo se sopra l'orizzonte; sotto orizzonte = BASSA):**
 
-1. `0_LEGGIMI.txt`: sintesi e istruzioni.
-2. `1_PRIMA_SCELTA.pdf`, `2_ALTERNATIVE.pdf`, `3_DA_VALUTARE.pdf`: **selezione operativa
-   per target** come tabelle TAPIR originali (una query per evento): PRIMA SCELTA =
-   target con primary di prima scelta (PRIMARY + BACKUP1 + BACKUP2); ALTERNATIVE =
-   target il cui miglior evento è alternativo; DA VALUTARE = i rimanenti, con motivo.
-   Orari locali/UTC, magnitudine, Luna, BJD_TDB, diagramma del transito e link online.
-   Le percentuali TAPIR restano non validate (vedi sotto).
-3. `9_ARCHIVIO_COMPLETO/index.html`: tutti gli eventi per target, inclusi fuori orario
-   e non consigliati; tabelle originali TAPIR e link alle carte del campo/airmass online.
-4. `risultati.csv`/`risultati.json`: metriche; `NOTE_SELEZIONE.txt`: metodo e limiti;
-   `manifest.json`: parametri, versioni, hash e tempi; `target_esclusi.json`: esclusioni.
+| Rischio | Condizioni (illuminazione % / separazione °) | Effetto |
+|---|---|---|
+| ESTREMA | ≥90 & <40 · ≥70 & <20 · ≥40 & <10 | `DA VALUTARE` |
+| ALTA | ≥80 & <60 · ≥50 & <40 · ≥20 & <20 | max `ALTERNATIVE` |
+| MODERATA | ≥70 & ≤100 · ≥50 & ≤70 · ≥20 & ≤40 | max `ALTERNATIVE` |
+| BASSA | tutto il resto | nessuna penalità |
 
-I PDF delle categorie richiedono `chromium` (snap va bene) e Internet al momento della
-generazione per CSS e icone remote; il PDF finale è autonomo. Senza chromium, o se una
-query TAPIR per evento fallisce, la categoria ricade automaticamente sulle schede
-locali ReportLab (le categorie vuote usano sempre le schede).
+La distanza può pesare più della fase: 63% a 8.5° è ESTREMA, 90% a 120° è BASSA.
 
-TAPIR è copiato nell'output: il checkout in `~/Downloads/Tapir` non viene modificato.
-La copia del template CSV espone il JD UTC preciso già calcolato dal motore.
-Il comando richiede l'installazione Perl locale funzionante, inclusi i moduli in `~/perl5`.
+**Score secondario (0-100, solo ordinamento):** 30% copertura + 20% baseline minima +
+20% quota centro (saturazione a 40°) + 15% Luna (penalità continua `illum × exp(-sep/45)`) +
+10% affidabilità temporale + 5% comodità oraria. **Magnitudine e profondità non entrano**
+finché non esiste un profilo strumentale reale (saturazione, SNR).
 
-## Dati e ripetibilità
+**Selezione per target:** PRIMARY = miglior evento operativo (P1) per classe poi score;
+BACKUP1/BACKUP2 = prossimi con diversificazione temporale (≥ 7 giorni, fallback ≥ 3),
+**ma la quality_class domina sempre la separazione**: una PRIMA SCELTA a 4 giorni batte
+un'ALTERNATIVE a 20. Gli altri eventi PRIMA/P1 diventano **EXTRA** nel calendario:
+visibili, non nascosti.
 
-Il catalogo viene aggiornato a ogni esecuzione. Si scelgono epoca e periodo dalla stessa
-riga NASA PS, con BJD-TDB esplicito; i fallback su durata/fotometria sono documentati.
-Le effemeridi con sistema temporale ambiguo non vengono indovinate.
-La selezione minimizza l'errore massimo agli estremi dell'intervallo richiesto.
+**Copertura e baseline sono ricalcolate indipendentemente** (Astropy, intersezione
+notte nautica −12° × quota ≥ 20°, griglia 120 s): le percentuali TAPIR non sono mai
+usate come verità (conservate come dati originali, con scarto segnalato).
 
-Cache solo esplicita:
+## Provenance e riproducibilità
+
+`manifest.json` distingue esplicitamente:
+
+- `astronomical_data` — run originale (TAPIR+Astropy), **mai ricalcolato dopo**;
+- `reclassification` — applicazione offline della policy sui valori esistenti;
+- `reporting` — commit git del codice che ha generato i report correnti;
+- `lazy_tapir_fragments` — frammenti TAPIR generati in fase di reporting
+  (solo presentazione) con mappatura evento→frammento→raw→query→UTC;
+- `source_sha256` — hash di tutti i file originali;
+- `source_sha256` del sorgente planner sotto `dati_originali/planner_source/`.
+
+Rigenerare i report **non** tocca i dati astronomici: `write_reports` legge
+`risultati.json` e non riesegue TAPIR/Astropy. Le query TAPIR per-evento emesse in
+reporting sono solo presentazione e vengono validate in ingresso.
+
+## Sviluppo
 
 ```bash
-uan-transits plan "WASP-77 A b" --cache /archivio/9_ARCHIVIO_COMPLETO/dati_originali
-uan-transits plan "WASP-77 A b" --cache /archivio/9_ARCHIVIO_COMPLETO/dati_originali --offline
+.venv/bin/python -m unittest discover -s .        # 41 test (exit code reale)
+.venv/bin/python verify_output.py <pacchetto>     # audit di un pacchetto generato
 ```
 
-La prima usa la cache solo in caso di errore rete; la seconda non scarica.
-La query deve corrispondere: la cache PS vale per lo stesso insieme di target.
-La data originale e l'uso della cache sono riportati nei file `.meta.json` e sul terminale.
-Uscita 2: errore oppure nessun target utilizzabile; il manifest registra lo stato.
-Quando alcuni target falliscono, le esclusioni vengono conservate e gli altri elaborati.
+`verify_output.py` verifica: enumerazione completa dei cicli (niente buchi/duplicati),
+percentuali in 0-100, residuo temporale BJD, set esatti dei dossier, anchor e ID HTML
+unici, **identity di ogni frammento TAPIR incorporato**, coerenza manifest.
 
-## Verifica e dipendenze
+Struttura del codice (tutto in 4 moduli):
 
-```bash
-.venv/bin/python -m unittest discover -s . -v
-```
-
-Versioni fissate in `requirements.txt`; ambiente isolato `.venv`.
-Per ricrearlo con `uv`:
-
-```bash
-uv venv .venv
-uv pip install --python .venv/bin/python -r requirements.txt
-```
+- `planner.py` — CLI, catalogo NASA, scelta effemeridi, orchestrazione TAPIR, manifest
+- `observing.py` — policy v2.1.1: classify, moon_risk, score, finestre Astropy, analisi evento
+- `reports.py` — calendari, dossier TAPIR, export ICS/CSV, riepiloghi, provenance
+- `verify_output.py` — audit post-generazione di un pacchetto
 
 ## Limiti dichiarati
 
-- Periodo lineare; TTV note richiedono valutazione e un'ephemeride dedicata.
-- Covarianza epoca/periodo e errore sulla durata non propagati.
-- Quote senza rifrazione, orizzonte piano: edifici e ostacoli locali non modellati.
-- Intervalli interpolati su griglia di 120 s; Luna su griglia <=10 min; non sono un solver di contatti ad alta precisione.
-- IERS distribuito con Astropy: oltre la previsione disponibile vengono emessi avvisi,
-  conservati in `warnings.log`. Le coordinate future non sono misure future.
-- I link a carte del campo e airmass richiedono Internet; i report e i dati sono locali.
-- Gli HTML originali TAPIR conservano le percentuali originali e sono marcati non validati.
-- Date e quantità storiche 260/30/16 non sono obiettivi né risultati da forzare.
+- Effemeridi lineari; TTV solo segnalate; covarianza epoca/periodo ed errore durata non propagati.
+- Orizzonte piano, senza rifrazione; ostacoli locali e meteo non modellati.
+- Griglia 120 s (non un solver di contatti); IERS distribuito con Astropy.
+- Niente modello strumentale (SNR, saturazione, stelle di confronto): magnitude e
+  profondità sono esposte, non usate nello score.
+- Le date/quantità storiche (260/30/16) non sono obiettivi da riprodurre.
 
-Fonti: [TAPIR](https://github.com/elnjensen/Tapir),
-[NASA PS](https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html),
-[alias NASA](https://exoplanetarchive.ipac.caltech.edu/docs/sysaliases.html),
-[Astropy](https://docs.astropy.org/en/stable/time/index.html).
+## Fonti
+
+[TAPIR (Jensen)](https://github.com/elnjensen/Tapir) ·
+[NASA Exoplanet Archive PS](https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html) ·
+[alias NASA](https://exoplanetarchive.ipac.caltech.edu/docs/sysaliases.html) ·
+[Astropy](https://docs.astropy.org/en/stable/time/index.html) ·
+coordinate sito: [INAF Capodimonte](https://www.oacn.inaf.it/come-raggiungerci/)
+
+Le decisioni di policy e la storia delle verifiche release per release sono in
+[VALIDATION.md](VALIDATION.md). La specifica originale è in [SPEC.txt](SPEC.txt).
