@@ -206,3 +206,22 @@ Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi li
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello
 arcosecondo, conservato in warnings.log. Verificare effemeridi aggiornate prima di osservare.
+
+# Audit finale di release (16 settembre 2026)
+
+- Verificati i 27 frammenti TAPIR generati lazialmente per 3_DA_VALUTARE:
+  creati ESCLUSIVAMENTE come artefatti di presentazione (dossier 3), la shortlist
+  era gia' determinata prima delle query (curated_review_rows usa solo
+  quality_class/logistics_class/score/giorno, tutti pre-esistenti); nessun valore
+  TAPIR usato per quality/logistics/score/selection (snapshot 13264 eventi
+  identico al baseline). Query di tutti i 27 ricostruite e confrontate con
+  l'output TAPIR archiviato: start_date/days coerenti al 100%.
+- Zero sovrascritture di frammenti pre-esistenti (collisione di nomi esclusa).
+- Provenance nel manifest: sezione 'provenance' con distinzione esplicita fra
+  dati astronomici (run originale, non ricalcolati), riclassificazione offline,
+  reporting (commit 49d48d0) e frammenti TAPIR lazy (mappatura completa
+  evento->frammento/raw/query/UTC). git_commit aggiornato (era stale 92d0462).
+- risultati.json/csv byte-identici; 0_CALENDARIO_OPERATIVO.* byte-identici;
+  13264 eventi invariati campo per campo.
+- Nota: tag v2.1.2 (-> 8c79bc0) esiste nel repo ma non e' stato creato in
+  questa sessione; segnalato, nessuna azione.
