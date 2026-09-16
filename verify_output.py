@@ -75,6 +75,22 @@ for name,roles in fresh_sel.items():
         assert stored_roles.get((e['name'],e['cycle']))==role,('selection drift',name,e['cycle'])
 assert m.get('reporting',{}).get('first_choice_scope')=='all PRIMA SCELTA + P1'
 assert m['reporting']['calendar_events']==len(cal)
+# Calendario operativo congiunto (PRIMA SCELTA + ALTERNATIVE, solo P1).
+op=json.loads((archive/'0_CALENDARIO_OPERATIVO.json').read_text())
+op_ids=[r['event_id'] for r in op]
+assert len(op_ids)==len(set(op_ids)),('operational calendar duplicates',)
+op_expected={slug(e['name'])+'-c'+str(e['cycle']) for e in events
+             if e.get('logistics_class')=='P1' and e.get('quality_class') in ('PRIMA SCELTA','ALTERNATIVE')}
+assert set(op_ids)==op_expected,('operational calendar incomplete/impure',len(set(op_ids)),len(op_expected))
+op_mids=[datetime.fromisoformat(r['mid_local']) for r in op]
+assert op_mids==sorted(op_mids),('operational calendar not chronological',)
+assert all(r['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and r['logistics_class']=='P1' for r in op)
+assert m['reporting']['operational_calendar_events']==len(op)
+for f in ['0_CALENDARIO_OPERATIVO.html','0_CALENDARIO_OPERATIVO.csv']:
+    assert (archive/f).is_file(),('missing',f)
+if any(t['name']=='KELT-16 b' for t in targets):
+    kel=[r for r in op if r['target']=='KELT-16 b' and r['mid_local'].startswith('2026-09-21')]
+    assert kel and kel[0]['quality_class']=='ALTERNATIVE',('KELT-16 21/09 missing or reclassified',kel)
 # Re-evaluate up to three partial events at 30-second sampling, independent of rendering.
 convergence=[]
 for e in [e for e in events if 1<e['transit_percent']<99][:3]:

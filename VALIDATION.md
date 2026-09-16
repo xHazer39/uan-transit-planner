@@ -163,6 +163,22 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
   parziale, baseline debole, Luna, transito diurno).
 - 30/30 test (12 nuovi di calendario). TAPIR/Astropy NON rieseguiti: solo reporting.
 
+# Calendario operativo congiunto (16 settembre 2026, reporting only)
+
+- Nuovo output `0_CALENDARIO_OPERATIVO.{html,pdf,csv,json}`: vista cronologica unica
+  di TUTTI gli eventi (PRIMA SCELTA o ALTERNATIVE) AND P1, senza altri filtri nè limiti
+  per target. Risponde alla domanda "qual e' la prossima osservazione buona o ottimale?".
+- Archivio annuale: 213 eventi (97 PRIMA/P1 + 116 ALTERNATIVE/P1), 5 pagine PDF.
+- Regression case KELT-16 b 21/09/2026 23:16: presente come ALTERNATIVE (EXTRA),
+  reason_code MOON_MODERATA, score 96.2, NON promosso. verify_output lo controlla.
+- Le tabelle calendario mostrano ora anche quality_class e moon_risk per riga
+  (presentazione; nessuna soglia o classe modificata).
+- 31/31 test (1 nuovo aggregato con i 12 casi richiesti). verify_output PASS
+  (inclusi: 4 file presenti, conteggio == (PRIMA or ALTERNATIVE) and P1, nessun
+  duplicato, ordine cronologico, KELT-16, nessuna modifica ai risultati scientifici).
+- Future work (NON implementato, YAGNI): conflict detection, scheduling solver,
+  modelli telescopio/camera, SNR, stelle di confronto Gaia, priorita' ExoClock, meteo.
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello

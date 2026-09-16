@@ -153,7 +153,7 @@ class ReportChecks(unittest.TestCase):
             summary=json.loads((out/'9_ARCHIVIO_COMPLETO/riepilogo_target.json').read_text())[0]
             self.assertEqual(summary['events'],0)
             self.assertAlmostEqual(summary['max_altitude_theoretical_deg'],49.137139)
-            self.assertEqual(len(list(out.glob('*.pdf'))),3)
+            self.assertEqual(len(list(out.glob('*.pdf'))),4)
 
 class SelectionChecks(unittest.TestCase):
     def setUp(self):
@@ -380,6 +380,56 @@ class CalendarChecks(unittest.TestCase):
         self.assertTrue(all(r['name']=='A b' for r in rows))
         self.assertEqual([r['event_id'] for r in rows],['A_b-c1','A_b-c2','A_b-c3'])
         self.assertTrue(all(r['display_role']=='REVIEW' for r in rows))
+
+
+    def test_operational_calendar_mixed_classes(self):
+        from reports import operational_rows
+        # 1,2: PRIMA/P1 e ALTERNATIVE/P1 dentro; 5,6: DA VALUTARE e NON CONSIGLIATO fuori.
+        events=[self.ev('A b',1,0),self.ev('B b',2,10,'ALTERNATIVE'),
+                self.ev('C b',3,20,'DA VALUTARE'),self.ev('D b',4,30,'NON CONSIGLIATO')]
+        rows=operational_rows(events)
+        self.assertEqual([r['event_id'] for r in rows],['A_b-c1','B_b-c2'])
+        self.assertEqual({r['quality_class'] for r in rows},{'PRIMA SCELTA','ALTERNATIVE'})
+        # 3,4: varianti P2 escluse.
+        events=[self.ev('A b',1,0,log='P2'),self.ev('B b',2,10,'ALTERNATIVE',log='P2')]
+        self.assertEqual(operational_rows(events),[])
+        # 7: regression KELT-16 21/09/2026: ALTERNATIVE resta ALTERNATIVE nel calendario.
+        from zoneinfo import ZoneInfo
+        k=dict(self.ev('KELT-16 b',9,0,'ALTERNATIVE',score=85.8))
+        k['mid_local']=datetime(2026,9,21,23,16,tzinfo=ZoneInfo('Europe/Rome')).isoformat()
+        k['reason_codes']=['MOON_MODERATA']
+        rows=operational_rows([k])
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['quality_class'],'ALTERNATIVE')
+        self.assertEqual(rows[0]['mid_local'][:16],'2026-09-21T23:16')
+        self.assertIn('MOON_MODERATA',rows[0]['reason_codes'])
+        # 8,9: ordine globale per data, dicembre 2026 prima di gennaio 2027.
+        events=[self.ev('Zeta b',10,92),self.ev('Alpha b',11,77)]
+        rows=operational_rows(events)
+        self.assertEqual([r['name'] for r in rows],['Alpha b','Zeta b'])
+        self.assertTrue(rows[0]['mid_local'].startswith('2026-12'))
+        self.assertTrue(rows[1]['mid_local'].startswith('2027-01'))
+        # 10: nessun duplicato.
+        many=[self.ev('A b',i,d) for i,d in enumerate([0,9,18])]
+        ids=[r['event_id'] for r in operational_rows(many)]
+        self.assertEqual(len(ids),len(set(ids)))
+        # 11: count == (PRIMA or ALTERNATIVE) and P1.
+        events=[self.ev('A b',1,0),self.ev('A b',2,9,log='P2'),self.ev('B b',3,10,'ALTERNATIVE'),
+                self.ev('C b',4,12,'DA VALUTARE'),self.ev('D b',5,14)]
+        rows=operational_rows(events)
+        expected=sum(1 for e in events if e['logistics_class']=='P1'
+                     and e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE'))
+        self.assertEqual(len(rows),expected)
+        # 12: classi, score e PRIMARY/BACKUP identici prima/dopo.
+        import copy
+        events=[self.ev('A b',1,0),self.ev('B b',2,10,'ALTERNATIVE',score=70.0)]
+        self.roles(events)
+        snap=copy.deepcopy(events)
+        operational_rows(events)
+        for a,b in zip(events,snap):
+            for k in ('category','quality_class','logistics_class','score','cycle'):
+                self.assertEqual(a[k],b[k],k)
+            self.assertEqual(a.get('selection_role'),b.get('selection_role'))
 
 
 if __name__=='__main__': unittest.main()

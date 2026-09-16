@@ -200,6 +200,7 @@ _HEAD=('<!doctype html><html lang="it"><meta charset="utf-8"><title>{title}</tit
        'tr.r-backup td.role{{color:#14648a;font-weight:bold}}'
        'tr.r-extra td.role{{color:#555}}'
        'td.tgt{{font-weight:bold}}td.codes{{font-size:7.5px;color:#7a4a00}}'
+       'td.q{{font-size:7.5px}}tr.q-prima td.q{{color:#0a7d2c;font-weight:bold}}tr.q-alt td.q{{color:#8a5a14}}'
        'a{{color:#126a8a;text-decoration:none}}</style><body>{body}</body></html>')
 
 
@@ -222,19 +223,30 @@ CALENDAR_FIELDS=['event_id','target','start_local','mid_local','end_local','qual
                  'moon_illumination_percent','moon_min_separation_deg','reason_codes']
 
 
-def calendar_rows(events,quality):
-    """All events of one quality class with logistics P1, globally chronological.
-    Presentation only: never mutates events. display_role = selection_role or EXTRA."""
+def _prep_calendar(events,qualities,default_role):
+    """Shared presentation-only row prep: P1 events of the given quality classes,
+    chronological by mid_local. Never mutates input events."""
     rows=[dict(e) for e in events
-          if e.get('quality_class')==quality and e.get('logistics_class')=='P1']
+          if e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
     for e in rows:
-        e['display_role']=e.get('selection_role') or 'EXTRA'
+        e['display_role']=e.get('selection_role') or default_role
         e['event_id']=slug(e['name'])+'-c'+str(e['cycle'])
         e.setdefault('start_local',e.get('ingress_local'))
         e.setdefault('end_local',e.get('egress_local'))
         e.setdefault('target',e['name'])
     rows.sort(key=lambda e:datetime.fromisoformat(e['mid_local']))
     return rows
+
+
+def calendar_rows(events,quality):
+    """All events of one quality class with logistics P1, globally chronological.
+    Presentation only: never mutates events. display_role = selection_role or EXTRA."""
+    return _prep_calendar(events,{quality},'EXTRA')
+
+
+def operational_rows(events):
+    """Operational calendar: PRIMA SCELTA and ALTERNATIVE events with logistics P1."""
+    return _prep_calendar(events,{'PRIMA SCELTA','ALTERNATIVE'},'EXTRA')
 
 
 def curated_review_rows(events,p):
@@ -261,8 +273,8 @@ def curated_review_rows(events,p):
 def _calendar_table(rows,tz,target_map,p,notes=True):
     """Compact TAPIR-style calendar table (multiple events per page)."""
     from urllib.parse import quote
-    head=('<tr><th>Data</th><th>Target</th><th>Role</th><th>Inizio</th><th>Centro</th><th>Fine</th>'
-          '<th>El&deg; i/m/f</th><th>Trans%</th><th>Base% i/f</th><th>Luna</th><th>Score</th>'
+    head=('<tr><th>Data</th><th>Target</th><th>Classe</th><th>Role</th><th>Inizio</th><th>Centro</th><th>Fine</th>'
+          '<th>El&deg; i/m/f</th><th>Trans%</th><th>Base% i/f</th><th>Luna</th><th>Rischio</th><th>Score</th>'
           '<th>Codes</th><th>Link</th></tr>')
     out=['<table class="cal">'+head]
     current=None
@@ -270,16 +282,18 @@ def _calendar_table(rows,tz,target_map,p,notes=True):
         mid=datetime.fromisoformat(e['mid_local'])
         if (mid.year,mid.month)!=current:
             current=(mid.year,mid.month)
-            out.append('<tr class="monthrow"><td colspan="13">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
+            out.append('<tr class="monthrow"><td colspan="15">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
         t=target_map.get(e['name'],{})
         chart,air=links(e,t,p) if t else ('#','#')
         nasa='https://exoplanetarchive.ipac.caltech.edu/overview/'+quote(e['name'].replace(' ','%20'))
         codes=','.join(e.get('reason_codes') or []) or '&mdash;'
         display=e.get('display_role','')
         role_cls={'PRIMARY':'r-primary','BACKUP1':'r-backup','BACKUP2':'r-backup'}.get(display,'r-extra')
-        out.append('<tr class="'+role_cls+'">'
+        qcls='q-prima' if e.get('quality_class')=='PRIMA SCELTA' else 'q-alt'
+        out.append('<tr class="'+role_cls+' '+qcls+'">'
             +'<td>'+mid.strftime('%d/%m')+'</td>'
             +'<td class="tgt">'+html.escape(e['name'])+'</td>'
+            +'<td class="q">'+html.escape(e['quality_class'])+'</td>'
             +'<td class="role">'+display+'</td>'
             +'<td>'+datetime.fromisoformat(e['start_local']).strftime('%H:%M')+'</td>'
             +'<td>'+mid.strftime('%H:%M')+'</td>'
@@ -288,6 +302,7 @@ def _calendar_table(rows,tz,target_map,p,notes=True):
             +'<td>'+fmt(e['transit_percent'],0)+'</td>'
             +'<td>'+fmt(e['baseline_before_percent'],0)+'/'+fmt(e['baseline_after_percent'],0)+'</td>'
             +'<td>'+fmt(e['moon_illumination_percent'],0)+'% @'+fmt(e['moon_min_separation_deg'],0)+'&deg;</td>'
+            +'<td>'+html.escape(e.get('moon_risk') or '&mdash;')+'</td>'
             +'<td>'+fmt(e.get('score'),1)+'</td>'
             +'<td class="codes">'+codes+'</td>'
             +'<td><a href="'+html.escape(chart,quote=True)+'">chart</a> <a href="'+html.escape(air,quote=True)+'">air</a> '
@@ -312,11 +327,11 @@ def calendar_pdf(path,title,rows,tz,target_map,p):
     return _chromium_render(calendar_document(rows,title,tz,target_map,p),path)
 
 
-def write_calendar_files(archive,rows):
+def write_calendar_files(archive,rows,name='calendario_prima_scelta'):
     """Machine-readable calendar (CSV+JSON), already chronological."""
     clean=[{k:(e.get(k) if k!='reason_codes' else list(e.get('reason_codes') or [])) for k in CALENDAR_FIELDS} for e in rows]
-    (archive/'calendario_prima_scelta.json').write_text(json.dumps(clean,indent=2,ensure_ascii=False))
-    with (archive/'calendario_prima_scelta.csv').open('w',newline='',encoding='utf-8') as f:
+    (archive/(name+'.json')).write_text(json.dumps(clean,indent=2,ensure_ascii=False))
+    with (archive/(name+'.csv')).open('w',newline='',encoding='utf-8') as f:
         w=csv.DictWriter(f,fieldnames=CALENDAR_FIELDS)
         w.writeheader()
         for r in clean:
@@ -378,26 +393,35 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
           'Percentuali di copertura/baseline ricalcolate in modo indipendente; TAPIR resta nel dettaglio per evento. '
           'Tutti gli eventi sono conservati in 9_ARCHIVIO_COMPLETO.')
     # Calendari semanticamente puri: 1=PRIMA SCELTA+P1, 2=ALTERNATIVE+P1; 3=review curata.
+    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1.
     tz=p['timezone']
     cal1=calendar_rows(events,'PRIMA SCELTA')
     cal2=calendar_rows(events,'ALTERNATIVE')
+    cal0=operational_rows(events)
     rev3=curated_review_rows(events,p)
     (archive/'1_PRIMA_SCELTA.html').write_text(calendar_document(cal1,'CALENDARIO OPERATIVO - PRIMA SCELTA',tz,target_map,p),encoding='utf-8')
     (archive/'2_ALTERNATIVE.html').write_text(calendar_document(cal2,'ALTERNATIVE - occasioni operative',tz,target_map,p),encoding='utf-8')
+    (archive/'0_CALENDARIO_OPERATIVO.html').write_text(calendar_document(cal0,'CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',tz,target_map,p),encoding='utf-8')
     write_calendar_files(archive,cal1)
+    write_calendar_files(archive,cal0,'0_CALENDARIO_OPERATIVO')
     manifest['reporting']={'calendar_mode':'chronological','timezone':tz,
         'first_choice_scope':'all PRIMA SCELTA + P1',
         'selection_roles_preserved':True,'extra_events_visible':True,
-        'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA')}
-    for i,(category,rows) in enumerate([('PRIMA SCELTA',cal1),('ALTERNATIVE',cal2),('DA VALUTARE',rev3)],1):
-        target=out/f'{i}_{category.replace(" ","_")}.pdf'
+        'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA'),
+        'operational_calendar_events':len(cal0),
+        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1'}
+    pdfs=[(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0),
+          (out/'1_PRIMA_SCELTA.pdf','PRIMA SCELTA',cal1),
+          (out/'2_ALTERNATIVE.pdf','ALTERNATIVE',cal2),
+          (out/'3_DA_VALUTARE.pdf','DA VALUTARE',rev3)]
+    for target,title,rows in pdfs:
         if not rows:
-            make_pdf(target,category,[],target_map,p); continue
+            make_pdf(target,title,[],target_map,p); continue
         try:
-            if calendar_pdf(target,category,rows,tz,target_map,p): continue
+            if calendar_pdf(target,title,rows,tz,target_map,p): continue
         except (OSError,KeyError):
             pass
-        make_pdf(target,category,rows,target_map,p)
+        make_pdf(target,title,rows,target_map,p)
     index=[]
     target_summaries=[]
     style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'
