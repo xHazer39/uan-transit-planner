@@ -201,7 +201,13 @@ _HEAD=('<!doctype html><html lang="it"><meta charset="utf-8"><title>{title}</tit
        'tr.r-extra td.role{{color:#555}}'
        'td.tgt{{font-weight:bold}}td.codes{{font-size:7.5px;color:#7a4a00}}'
        'td.q{{font-size:7.5px}}tr.q-prima td.q{{color:#0a7d2c;font-weight:bold}}tr.q-alt td.q{{color:#8a5a14}}'
-       'a{{color:#126a8a;text-decoration:none}}</style><body>{body}</body></html>')
+       'a{{color:#126a8a;text-decoration:none}}'
+       'table.idx{{border-collapse:collapse;font-size:10px;margin:6px 0 10px}}'
+       'table.idx th,table.idx td{{border:1px solid #ccd8de;padding:2px 6px;text-align:left}}'
+       'table.idx th{{background:#e5eef2}}'
+       '.disclaimer{{border:2px solid #123b50;background:#eef6f9;padding:8px;font-size:10px;margin:8px 0}}'
+       'h2.tapirband{{background:#fff2cf;border:2px solid #b98a00;padding:6px;font-size:12px;margin:10px 0}}'
+       'div.evblk{{break-inside:avoid;margin:8px 0}}</style><body>{body}</body></html>')
 
 
 MONTHS_IT=('GENNAIO','FEBBRAIO','MARZO','APRILE','MAGGIO','GIUGNO',
@@ -325,6 +331,54 @@ def calendar_document(rows,title,tz,target_map,p):
 
 def calendar_pdf(path,title,rows,tz,target_map,p):
     return _chromium_render(calendar_document(rows,title,tz,target_map,p),path)
+
+
+def prototype_rows(events):
+    """Spike: exact PRIMA SCELTA + P1 subset, chronological. Presentation only."""
+    return _prep_calendar(events,{'PRIMA SCELTA'},'EXTRA')
+
+
+def prototype_document(rows,archive,tz):
+    """Aggregated authentic-TAPIR page: planner index + disclaimer + real TAPIR fragments.
+    Returns (html_string, first_broken_event_id_or_None)."""
+    idx=['<table class="idx"><tr><th>Data</th><th>Target</th><th>Centro locale</th><th>Ruolo</th></tr>']
+    body=[];assets='';intro='';first=True;current=None
+    for e in rows:
+        mid=datetime.fromisoformat(e['mid_local'])
+        if (mid.year,mid.month)!=current:
+            current=(mid.year,mid.month)
+            body.append('<h2 class="monthhdr">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</h2>')
+        idx.append('<tr><td>'+mid.strftime('%d/%m/%Y')+'</td><td class="tgt">'+html.escape(e['name'])
+                   +'</td><td>'+mid.strftime('%H:%M')+'</td><td class="role">'+e['display_role']+'</td></tr>')
+        page=archive/e['tapir_event_html']
+        pieces=_tapir_pieces(page.read_text()) if page.is_file() else None
+        if pieces is None:
+            return None,e['event_id']
+        a,i,t=pieces
+        if first:
+            assets+=a;intro+=i;first=False
+        body.append('<div class="evblk"><p class="rolehdr"><b>'+html.escape(e['name'])+'</b> — '
+                    +e['display_role']+' — centro locale '+mid.strftime('%d/%m/%Y %H:%M')+' '
+                    +html.escape(tz)+'</p>'+t+'</div>')
+    idx.append('</table>')
+    period=rows[0]['mid_local'][:10]+' → '+rows[-1]['mid_local'][:10]
+    ntarget=len({e['name'] for e in rows})
+    cover=('<div class="coverbox"><h1>UAN - PRIMA SCELTA</h1><p><b>Prototipo formato TAPIR</b></p>'
+           '<p><b>'+str(len(rows))+' finding operativi</b> · '+str(ntarget)+' target · periodo '+period+'</p>'
+           '<p>Timezone operativo del planner: <b>'+html.escape(tz)+'</b></p>'
+           '<p>Ruoli: PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · '
+           'EXTRA = ulteriore occasione valida della stessa classe, non fra le tre principali.</p></div>')
+    disclaimer=('<div class="disclaimer"><b>Gli eventi inclusi sono selezionati dal UAN Transit Planner '
+                'secondo policy UAN v2.1.1.</b><br/>Orari dell\'indice: '+html.escape(tz)+'.<br/>'
+                'I dati e gli orari mostrati nelle tabelle TAPIR sottostanti sono quelli originali TAPIR '
+                'e possono essere in UTC.<br/>TAPIR è usato qui come formato di presentazione; '
+                'classificazione e selezione sono determinate dal planner.</div>')
+    tapir_band='<h2 class="tapirband">OUTPUT TAPIR ORIGINALE — orari della tabella TAPIR: UTC</h2>'
+    body_html=(cover
+               +'<h2 class="monthhdr">Indice cronologico (ora locale '+html.escape(tz)+')</h2>'
+               +'\n'.join(idx)+disclaimer+tapir_band+intro+'\n'.join(body))
+    doc=_HEAD.format(title='UAN - PRIMA SCELTA (prototipo TAPIR)',assets=assets,body=body_html)
+    return doc,None
 
 
 def write_calendar_files(archive,rows,name='calendario_prima_scelta'):

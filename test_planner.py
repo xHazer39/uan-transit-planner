@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from reports import slug
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from observing import coverage, intervals, logistic_bounds, classify
@@ -430,6 +432,71 @@ class CalendarChecks(unittest.TestCase):
             for k in ('category','quality_class','logistics_class','score','cycle'):
                 self.assertEqual(a[k],b[k],k)
             self.assertEqual(a.get('selection_role'),b.get('selection_role'))
+
+
+class PrototypeChecks(unittest.TestCase):
+    def setUp(self):
+        from reports import prototype_rows,prototype_document
+        from datetime import datetime,timezone,timedelta
+        import tempfile
+        self.prototype_rows=prototype_rows
+        self.prototype_document=prototype_document
+        self.tmp=tempfile.TemporaryDirectory()
+        self.archive=self.tmp.name
+        frag='<table id="target_table"><tr><th>Name</th></tr><tr><td>MARKER_TAPIR_ROW</td></tr></table>'
+        page=('<!doctype html><html><head><style>.x{}</style></head><body>'
+              '<p>Only 1 target matches your constraints. Searching for observable transits over 1.0 days...</p>'
+              +frag+'</body></html>')
+        d=self.archive+'/T/'
+        import os; os.makedirs(d,exist_ok=True)
+        open(d+'frag.html','w').write(page)
+        self.base=datetime(2026,10,1,22,0,tzinfo=timezone.utc)
+        self.timedelta=timedelta
+        self.p=dict(backup_preferred_separation_days=7,backup_fallback_separation_days=3)
+    def tearDown(self):
+        self.tmp.cleanup()
+    def ev(self,name,cycle,days,cat='PRIMA SCELTA',log='P1',score=90.0):
+        mid=self.base+self.timedelta(days=days)
+        return dict(name=name,cycle=cycle,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
+                    category=cat,quality_class=cat,logistics_class=log,score=score,
+                    selection_role=None,tapir_event_html='T/frag.html')
+    def test_subset_exact_chronological_no_duplicates(self):
+        events=[self.ev('Zeta b',1,9),self.ev('Alpha b',2,8),self.ev('B b',3,10,'ALTERNATIVE'),
+                self.ev('C b',4,11,'DA VALUTARE'),self.ev('D b',5,12,log='P2')]
+        rows=self.prototype_rows(events)
+        self.assertEqual([r['event_id'] for r in rows],['Alpha_b-c2','Zeta_b-c1'])
+        ids=[r['event_id'] for r in rows]
+        self.assertEqual(len(ids),len(set(ids)))
+        self.assertEqual([r['name'] for r in rows],['Alpha b','Zeta b'])
+    def test_roles_preserved(self):
+        events=[self.ev('WASP-77 A b',1,0),self.ev('A b',2,9)]
+        roles=self.roles(events)
+        rows=self.prototype_rows(events)
+        byid={r['event_id']:r for r in rows}
+        for (name,cycle),role in roles.items():
+            self.assertEqual(byid[slug(name)+'-c'+str(cycle)]['display_role'],role)
+    def roles(self,events):
+        from reports import compute_selection
+        sel=compute_selection(events,self.p)
+        return {(e['name'],e['cycle']):e['selection_role'] for roles in sel.values() for _,e in roles}
+    def test_document_contains_index_disclaimer_tapir(self):
+        events=[self.ev('WASP-77 A b',1,0,score=99.9),self.ev('A b',2,9)]
+        self.roles(events)
+        rows=self.prototype_rows(events)
+        doc,broken=self.prototype_document(rows,Path(self.archive),'Europe/Rome')
+        self.assertIsNone(broken)
+        for marker in ['UAN - PRIMA SCELTA','Prototipo formato TAPIR','OUTPUT TAPIR ORIGINALE',
+                       'policy UAN v2.1.1','MARKER_TAPIR_ROW','WASP-77 A b','Europe/Rome',
+                       'target_table','PRIMARY']:
+            self.assertIn(marker,doc)
+        self.assertEqual(doc.count('MARKER_TAPIR_ROW'),len(rows))
+    def test_broken_fragment_reported_not_hidden(self):
+        events=[self.ev('A b',1,0)]
+        events[0]['tapir_event_html']='T/inesistente.html'
+        rows=self.prototype_rows(events)
+        doc,broken=self.prototype_document(rows,Path(self.archive),'Europe/Rome')
+        self.assertIsNone(doc)
+        self.assertEqual(broken,'A_b-c1')
 
 
 if __name__=='__main__': unittest.main()
