@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from pathlib import Path
-from datetime import datetime,timedelta
+from datetime import datetime,timedelta,timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 from observing import geometry_label
@@ -397,6 +397,42 @@ def calendar_document(rows,title,tz,target_map,p):
     return _HEAD.format(title=title,assets='',body=body)
 
 
+def write_google_calendar(archive,rows):
+    """Esporta la shortlist per Google Calendar: ICS (formato nativo, timezone-safe)
+    + CSV nel template Google. Orari = inizio/fine transito in ora locale."""
+    # ponytail: niente folding ICS a 75 ottetti - Google accetta righe lunghe
+    ics=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//UAN Transit Planner//IT','CALSCALE:GREGORIAN']
+    with (archive/'1_PRIMA_SCELTA.google_calendar.csv').open('w',newline='',encoding='utf-8') as f:
+        w=csv.writer(f)
+        w.writerow(['Subject','Start Date','Start Time','End Date','End Time','All Day Event','Description','Location','Private'])
+        for e in rows:
+            ti=datetime.fromisoformat(e['ingress_local']);te=datetime.fromisoformat(e['egress_local'])
+            tu=datetime.fromisoformat(e['mid_local'])
+            summary=f"{e['name']} transito ({e['quality_class']}, {e['display_role']})"
+            desc=(f"Ruolo: {e['display_role']} | Classe: {e['quality_class']} | Score: {fmt(e.get('score'))}\n"
+                  f"Transito osservabile: {fmt(e['transit_percent'],0)}% | Baseline i/f: "
+                  f"{fmt(e['baseline_before_percent'],0)}/{fmt(e['baseline_after_percent'],0)}%\n"
+                  f"Quota i/m/f: {fmt(e['altitude_ingress_deg'],0)}/{fmt(e['altitude_mid_deg'],0)}/{fmt(e['altitude_egress_deg'],0)} gradi\n"
+                  f"Luna: {fmt(e['moon_illumination_percent'],0)}% a {fmt(e['moon_min_separation_deg'],0)} gradi ({e['moon_risk']})\n"
+                  f"Motivo: {e.get('reason','')}\n"
+                  f"Sito: Osservatorio Astronomico di Capodimonte (ora locale)\n"
+                  f"Dettagli TAPIR: https://astro.swarthmore.edu/transits/")
+            ics+=['BEGIN:VEVENT',f'UID:{e["event_id"]}@uan-transit-planner',
+                  'DTSTAMP:'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'),
+                  'DTSTART:'+ti.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ'),
+                  'DTEND:'+te.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ'),
+                  'SUMMARY:'+summary.replace(',','\\,'),
+                  'DESCRIPTION:'+desc.replace('\n','\\n').replace(',','\\,').replace(';','\\;'),
+                  'LOCATION:Osservatorio Astronomico di Capodimonte',
+                  'END:VEVENT']
+            w.writerow([f"{e['name']} transito ({e['quality_class']}, {e['display_role']})",
+                        ti.strftime('%m/%d/%Y'),ti.strftime('%I:%M:%S %p'),
+                        te.strftime('%m/%d/%Y'),te.strftime('%I:%M:%S %p'),'False',
+                        desc,'Osservatorio Astronomico di Capodimonte','True'])
+    ics.append('END:VCALENDAR')
+    (archive/'1_PRIMA_SCELTA.ics').write_text('\r\n'.join(ics)+'\r\n',encoding='utf-8')
+
+
 def calendar_pdf(path,title,rows,tz,target_map,p):
     return _chromium_render(calendar_document(rows,title,tz,target_map,p),path)
 
@@ -491,6 +527,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     # 0_CALENDARIO_OPERATIVO: dashboard sintetica del planner (invariata).
     (archive/'0_CALENDARIO_OPERATIVO.html').write_text(calendar_document(cal0,'CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',tz,target_map,p),encoding='utf-8')
     write_calendar_files(archive,cal0,'0_CALENDARIO_OPERATIVO')
+    write_google_calendar(archive,cal1)
     if not calendar_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0,tz,target_map,p):
         raise ValueError('Rendering PDF fallito per 0_CALENDARIO_OPERATIVO (chromium)')
     manifest['reporting']={'calendar_mode':'chronological','timezone':tz,

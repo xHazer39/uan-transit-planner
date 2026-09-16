@@ -156,6 +156,7 @@ class ReportChecks(unittest.TestCase):
             self.assertEqual(summary['events'],0)
             self.assertAlmostEqual(summary['max_altitude_theoretical_deg'],49.137139)
             self.assertEqual(len(list(out.glob('*.pdf'))),4)
+            self.assertTrue((out/'9_ARCHIVIO_COMPLETO'/'1_PRIMA_SCELTA.ics').is_file())
 
 class SelectionChecks(unittest.TestCase):
     def setUp(self):
