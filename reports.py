@@ -12,11 +12,6 @@ from pathlib import Path
 from datetime import datetime,timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 from observing import geometry_label
 from astropy.coordinates import SkyCoord,EarthLocation
 import astropy.units as u
@@ -46,49 +41,6 @@ def links(e,t,p):
         target=t['name'],ra=c.ra.hour,dec=c.dec.deg,timezone=p['timezone'],jd=mid,
         jd_start=begin,jd_end=end,use_utc=0,max_airmass=4))
     return chart,air
-
-
-def make_pdf(path,title,events,targets,p):
-    styles=getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='SmallUAN',fontName='Helvetica',fontSize=8.2,leading=11,spaceAfter=4))
-    styles.add(ParagraphStyle(name='CardUAN',fontName='Helvetica-Bold',fontSize=11,leading=14,textColor=colors.HexColor('#123b50'),spaceAfter=5))
-    para=lambda s: Paragraph(s,styles['SmallUAN'])
-    story=[Paragraph('UAN Transit Planner',styles['Title']),Paragraph(title,styles['Heading1']),
-           para(f'{html.escape(p["name"])} | {html.escape(p["timezone"])} | {len(events)} eventi in fascia pratica'),
-           para(f'Copertura: quota ≥ {p["visibility_altitude_deg"]}° e Sole ≤ {p["twilight_deg"]}°. '
-                'Orari con data e offset UTC. La baseline può terminare dopo il limite del transito. '
-                'Sintesi locale di eventi TAPIR con metriche Astropy; categorie organizzative, non ufficiali UAN.'),Spacer(1,12)]
-    if not events:
-        story.append(para('Nessun evento soddisfa questa categoria e la disponibilità pratica nell’intervallo richiesto. '
-                          'Consultare l’archivio completo per gli eventi fuori orario e le esclusioni.'))
-    for e in events:
-        chart,air=links(e,targets[e['name']],p)
-        head=Paragraph(html.escape(e['name'])+' · '+html.escape(e['mid_local'][:10]),styles['CardUAN'])
-        rows=[['Ingresso locale','Centro locale','Uscita locale'],
-              [e[k].replace('T',' ') for k in ('ingress_local','mid_local','egress_local')],
-              ['Quote ingresso / centro / uscita','Transito / entro orari','Baseline pratica prima / dopo'],
-              [f'{fmt(e["altitude_ingress_deg"])} / {fmt(e["altitude_mid_deg"])} / {fmt(e["altitude_egress_deg"])}°',
-               f'{fmt(e["transit_percent"])}% / {fmt(e["practical_transit_percent"])}%',
-               f'{fmt(e.get("practical_baseline_before_minutes",e["baseline_before_minutes"]))} / {fmt(e.get("practical_baseline_after_minutes",e["baseline_after_minutes"]))} min']]
-        table=Table([[para(html.escape(str(v))) for v in row] for row in rows],colWidths=[171]*3)
-        table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e5eef2')),
-              ('BACKGROUND',(0,2),(-1,2),colors.HexColor('#e5eef2')),('VALIGN',(0,0),(-1,-1),'TOP'),
-              ('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]))
-        info=f'Durata {fmt(e["duration_minutes"])} min · quota min/max {fmt(e["altitude_min_deg"])} / {fmt(e["altitude_max_deg"])}° · '
-        info+=f'{html.escape(e["magnitude_band"])} {fmt(e["magnitude"])} · profondità {fmt(e["depth_ppt"])} ppt.'
-        moon=f'Luna al centro: {fmt(e["moon_illumination_percent"])}% a {fmt(e["moon_separation_deg"])}°, quota {fmt(e["moon_altitude_mid_deg"])}°. '
-        moon+=f'Incertezza centro: {fmt(e["uncertainty_minutes"])} min. Baseline richiesta per lato: {fmt(e["baseline_denominator_minutes_per_side"])} min.'
-        session='Sessione desiderata: '+e['session_start_local'].replace('T',' ')+' → '+e['session_end_local'].replace('T',' ')
-        card=[head,table,Spacer(1,5),para(info),para(moon),para(html.escape(session)),
-              para('<b>'+html.escape(e['reason'])+'</b>'),para(html.escape(e.get('logistics_note',''))),
-              para(f'<link href="{html.escape(chart,quote=True)}" color="#14648a">Carta del campo (Aladin, online)</link> · '
-                   f'<link href="{html.escape(air,quote=True)}" color="#14648a">Grafico airmass (online)</link>'),Spacer(1,15)]
-        story.append(KeepTogether(card))
-    def footer(canvas,doc):
-        canvas.setFont('Helvetica',8);canvas.setFillColor(colors.grey)
-        canvas.drawString(40,23,'Ricalcolare le effemeridi prima di osservare. Dettagli e fonti nell’archivio.')
-        canvas.drawRightString(A4[0]-40,23,str(doc.page))
-    SimpleDocTemplate(str(path),pagesize=A4,rightMargin=40,leftMargin=40,topMargin=35,bottomMargin=40).build(story,onFirstPage=footer,onLaterPages=footer)
 
 
 def chromium_pdf(html_path,pdf_path):
@@ -216,12 +168,8 @@ MONTHS_IT=('GENNAIO','FEBBRAIO','MARZO','APRILE','MAGGIO','GIUGNO',
            'LUGLIO','AGOSTO','SETTEMBRE','OTTOBRE','NOVEMBRE','DICEMBRE')
 
 
-def chronological_selection(groups):
-    """Presentation-only: flatten per-target roles into one global list ordered by
-    mid_local (timezone-aware ISO, Europe/Rome). Never changes roles or classes."""
-    flat=[(name,role,e) for name,roles in groups for role,e in roles]
-    flat.sort(key=lambda item:datetime.fromisoformat(item[2]['mid_local']))
-    return flat
+MONTHS_IT=('GENNAIO','FEBBRAIO','MARZO','APRILE','MAGGIO','GIUGNO',
+           'LUGLIO','AGOSTO','SETTEMBRE','OTTOBRE','NOVEMBRE','DICEMBRE')
 
 
 CALENDAR_FIELDS=['event_id','target','start_local','mid_local','end_local','quality_class',
@@ -453,11 +401,6 @@ def calendar_pdf(path,title,rows,tz,target_map,p):
     return _chromium_render(calendar_document(rows,title,tz,target_map,p),path)
 
 
-def prototype_rows(events):
-    """Spike: exact PRIMA SCELTA + P1 subset, chronological. Presentation only."""
-    return _prep_calendar(events,{'PRIMA SCELTA'},'EXTRA')
-
-
 def tapir_dossier_document(rows,archive,tz,title,role_legend):
     """Official dossier: planner index + disclaimer + authentic aggregated TAPIR fragments.
     rows must already be the chosen chronological subset. Presentation only: never mutates
@@ -522,36 +465,6 @@ def write_calendar_files(archive,rows,name='calendario_prima_scelta'):
     return clean
 
 
-def selection_tapir_pdf(path,title,groups,archive,note,tz):
-    """Selection PDF in global chronological order with month separators."""
-    flat=chronological_selection(groups)
-    assets='';intro='';body=[];first_fragment=True;current_month=None
-    for name,role,e in flat:
-        mid=datetime.fromisoformat(e['mid_local'])
-        body.append('<div class="pb">')
-        if (mid.year,mid.month)!=current_month:
-            body.append('<h2 class="monthhdr">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</h2>')
-            current_month=(mid.year,mid.month)
-        body.append('<h2 class="tgthdr">'+html.escape(name)+' — '+role+'</h2>')
-        body.append('<p>Centro locale: '+mid.strftime('%d/%m/%Y %H:%M')+' '+html.escape(tz)
-                    +'<br/>Classe: '+html.escape(e['category'])
-                    +'<br/>Score: '+fmt(e.get('score'))+'</p>')
-        page=(archive/e['tapir_event_html']).read_text()
-        pieces=_tapir_pieces(page)
-        if pieces is None: return False
-        a,i,t=pieces
-        if first_fragment:
-            assets+=a;intro+=i;first_fragment=False
-        body.append('<p style="font-size:10px">Tabella TAPIR originale: orari UTC.</p>')
-        body.append(t)
-        body.append('</div>')
-    cover=('<div class="coverbox"><h1>'+html.escape(title)+'</h1>'
-           '<p><b>'+str(len(groups))+' target, '+str(len(flat))+' eventi selezionati in ordine cronologico.</b></p></div>'
-           '<p style="font-size:10px">'+note+'</p>')
-    doc=_HEAD.format(title=title,assets=assets,body=cover+intro+'\n'.join(body))
-    return _chromium_render(doc,path)
-
-
 def write_reports(out,events,targets,rejections,manifest,selection=None):
     archive=out/'9_ARCHIVIO_COMPLETO';p=manifest['profile']
     events.sort(key=lambda e:(CATEGORIES.index(e['category']),e['mid_utc'],e['name']))
@@ -578,11 +491,8 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     # 0_CALENDARIO_OPERATIVO: dashboard sintetica del planner (invariata).
     (archive/'0_CALENDARIO_OPERATIVO.html').write_text(calendar_document(cal0,'CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',tz,target_map,p),encoding='utf-8')
     write_calendar_files(archive,cal0,'0_CALENDARIO_OPERATIVO')
-    if cal0:
-        if not calendar_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0,tz,target_map,p):
-            raise ValueError('Rendering PDF fallito per 0_CALENDARIO_OPERATIVO (chromium)')
-    else:
-        make_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO',[],target_map,p)
+    if not calendar_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0,tz,target_map,p):
+        raise ValueError('Rendering PDF fallito per 0_CALENDARIO_OPERATIVO (chromium)')
     manifest['reporting']={'calendar_mode':'chronological','timezone':tz,
         'first_choice_scope':'all PRIMA SCELTA + P1',
         'selection_roles_preserved':True,'extra_events_visible':True,

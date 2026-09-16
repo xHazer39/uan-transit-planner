@@ -121,9 +121,9 @@ from datetime import datetime as _DT
 checked=0
 for e in events:
     # solo le righe dei dossier 1/2/3 hanno frammento canonico obbligatorio
-    in_d=(e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and e['logistics_class']=='P1')
-    if e['quality_class']=='DA VALUTARE' and e['logistics_class']=='P1':
-        in_d=(e['name'],e['cycle'],e['mid_utc']) in _short_rows
+    in_d=(e['logistics_class']=='P1' and
+          (e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') or
+           (e['name'],e['cycle'],e['mid_utc']) in _short_rows))
     if not in_d:
         continue
     canon=archive/(slug(e['name'])+'/tapir_event_c'+str(e['cycle'])+'.html')
