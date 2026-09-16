@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime,timedelta
 from urllib.parse import urlencode
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -202,12 +202,13 @@ _HEAD=('<!doctype html><html lang="it"><meta charset="utf-8"><title>{title}</tit
        'td.tgt{{font-weight:bold}}td.codes{{font-size:7.5px;color:#7a4a00}}'
        'td.q{{font-size:7.5px}}tr.q-prima td.q{{color:#0a7d2c;font-weight:bold}}tr.q-alt td.q{{color:#8a5a14}}'
        'a{{color:#126a8a;text-decoration:none}}'
-       'table.idx{{border-collapse:collapse;font-size:10px;margin:6px 0 10px}}'
-       'table.idx th,table.idx td{{border:1px solid #ccd8de;padding:2px 6px;text-align:left}}'
-       'table.idx th{{background:#e5eef2}}'
-       '.disclaimer{{border:2px solid #123b50;background:#eef6f9;padding:8px;font-size:10px;margin:8px 0}}'
-       'h2.tapirband{{background:#fff2cf;border:2px solid #b98a00;padding:6px;font-size:12px;margin:10px 0}}'
-       'div.evblk{{break-inside:avoid;margin:8px 0}}</style><body>{body}</body></html>')
+       '</style><body>{body}</body></html>')
+DOSSIER_CSS=('<style>table.idx{border-collapse:collapse;font-size:10px;margin:6px 0 10px}'
+             'table.idx th,table.idx td{border:1px solid #ccd8de;padding:2px 6px;text-align:left}'
+             'table.idx th{background:#e5eef2}'
+             '.disclaimer{border:2px solid #123b50;background:#eef6f9;padding:8px;font-size:10px;margin:8px 0}'
+             'h2.tapirband{background:#fff2cf;border:2px solid #b98a00;padding:6px;font-size:12px;margin:10px 0 6px;page-break-before:always}'
+             'div.evblk{break-inside:avoid;margin:8px 0}</style>')
 
 
 MONTHS_IT=('GENNAIO','FEBBRAIO','MARZO','APRILE','MAGGIO','GIUGNO',
@@ -242,6 +243,44 @@ def _prep_calendar(events,qualities,default_role):
         e.setdefault('target',e['name'])
     rows.sort(key=lambda e:datetime.fromisoformat(e['mid_local']))
     return rows
+
+
+def perl_env():
+    env=os.environ.copy()
+    env['PERL5LIB']=str(Path.home()/'perl5/lib/perl5')+(os.pathsep+env['PERL5LIB'] if env.get('PERL5LIB') else '')
+    return env
+
+
+def run_perl(script,cwd,args=None,query=None):
+    env=perl_env()
+    if query is not None:
+        env.update(REQUEST_METHOD='GET',QUERY_STRING=urlencode(query),GATEWAY_INTERFACE='CGI/1.1')
+    proc=subprocess.run(['perl',str(script),*(args or [])],cwd=cwd,env=env,text=True,capture_output=True,timeout=180)
+    return proc
+
+
+def tapir_event_html(t,p,e,engine,raw,folder,idx):
+    """One ground TAPIR HTML query bounded to a single event: table for the category PDFs."""
+    mid_local=datetime.fromisoformat(e['mid_local'])
+    evening=mid_local.date() if mid_local.hour>=12 else mid_local.date()-timedelta(days=1)
+    days=1 if float(t['period'])<2.2 else 2
+    query=dict(observatory_string='Specified_Lat_Long',observatory_latitude=p['latitude'],
+               observatory_longitude=p['longitude'],timezone=p['timezone'],use_utc=1,
+               start_date=evening.strftime('%m-%d-%Y'),days_to_print=days,days_in_past=0,
+               minimum_start_elevation=0,minimum_end_elevation=0,and_vs_or='or',minimum_ha=-12,
+               maximum_ha=12,baseline_hrs=p['baseline_hours'],show_unc=int(p['extend_uncertainty']),
+               minimum_depth=-999,maximum_V_mag=99,minimum_priority=0,twilight=p['twilight_deg'],
+               target_string='^'+re.escape(t['name'])+'$',max_airmass=4,single_object=0,space=0,print_html=1)
+    proc=run_perl(engine/'print_transits.cgi',engine,query=query)
+    name=f'{slug(t["name"])}_event_{idx:04d}'
+    (raw/(name+'.txt')).write_text(proc.stdout)
+    (raw/(name+'.log')).write_text(proc.stderr)
+    if proc.returncode: raise ValueError('TAPIR fallito (evento): '+proc.stderr[-200:])
+    body=proc.stdout[proc.stdout.lower().find('<!doctype'):] if '<!doctype' in proc.stdout.lower() else proc.stdout[proc.stdout.lower().find('<html'):]
+    body=re.sub(r'<head[^>]*>',lambda m:m.group(0)+'<base href="'+BASE+'">',body,count=1,flags=re.I)
+    (folder/f'tapir_event_{idx:04d}.html').write_text(body)
+    return f'{folder.name}/tapir_event_{idx:04d}.html'
+
 
 
 def calendar_rows(events,quality):
@@ -338,18 +377,26 @@ def prototype_rows(events):
     return _prep_calendar(events,{'PRIMA SCELTA'},'EXTRA')
 
 
-def prototype_document(rows,archive,tz):
-    """Aggregated authentic-TAPIR page: planner index + disclaimer + real TAPIR fragments.
-    Returns (html_string, first_broken_event_id_or_None)."""
+def tapir_dossier_document(rows,archive,tz,title,role_legend):
+    """Official dossier: planner index + disclaimer + authentic aggregated TAPIR fragments.
+    rows must already be the chosen chronological subset. Presentation only: never mutates
+    events, never reclassifies, never re-runs TAPIR. Returns (html, first_broken_event_id)."""
     idx=['<table class="idx"><tr><th>Data</th><th>Target</th><th>Centro locale</th><th>Ruolo</th></tr>']
     body=[];assets='';intro='';first=True;current=None
-    for e in rows:
+    for n,e in enumerate(rows):
         mid=datetime.fromisoformat(e['mid_local'])
+        anchor='event-'+e['event_id'].lower()
         if (mid.year,mid.month)!=current:
+            if current is not None:
+                body.append('</div>')
+            # month header + first finding of the month form one indivisible block
+            body.append('<div class="evblk" id="'+anchor+'"><h2 class="monthhdr">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</h2>')
             current=(mid.year,mid.month)
-            body.append('<h2 class="monthhdr">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</h2>')
-        idx.append('<tr><td>'+mid.strftime('%d/%m/%Y')+'</td><td class="tgt">'+html.escape(e['name'])
-                   +'</td><td>'+mid.strftime('%H:%M')+'</td><td class="role">'+e['display_role']+'</td></tr>')
+        else:
+            body.append('</div><div class="evblk" id="'+anchor+'">')
+        idx.append('<tr><td><a href="#'+anchor+'">'+mid.strftime('%d/%m/%Y')+'</a></td><td class="tgt">'
+                   +html.escape(e['name'])+'</td><td>'+mid.strftime('%H:%M')+'</td><td class="role">'
+                   +e['display_role']+'</td></tr>')
         page=archive/e['tapir_event_html']
         pieces=_tapir_pieces(page.read_text()) if page.is_file() else None
         if pieces is None:
@@ -357,27 +404,28 @@ def prototype_document(rows,archive,tz):
         a,i,t=pieces
         if first:
             assets+=a;intro+=i;first=False
-        body.append('<div class="evblk"><p class="rolehdr"><b>'+html.escape(e['name'])+'</b> — '
-                    +e['display_role']+' — centro locale '+mid.strftime('%d/%m/%Y %H:%M')+' '
-                    +html.escape(tz)+'</p>'+t+'</div>')
+        # namespace every HTML id of the fragment: no duplicate ids in the aggregated page
+        t=re.sub(r'\bid="([^"]*)"',lambda m:f'id="ev{n}-{m.group(1)}"',t)
+        body.append('<p class="rolehdr"><b>'+html.escape(e['name'])+'</b> — '+e['display_role']
+                    +' — centro locale '+mid.strftime('%d/%m/%Y %H:%M')+' '+html.escape(tz)+'</p>'+t)
+    if rows: body.append('</div>')
     idx.append('</table>')
-    period=rows[0]['mid_local'][:10]+' → '+rows[-1]['mid_local'][:10]
+    period=(rows[0]['mid_local'][:10]+' → '+rows[-1]['mid_local'][:10]) if rows else 'n/d'
     ntarget=len({e['name'] for e in rows})
-    cover=('<div class="coverbox"><h1>UAN - PRIMA SCELTA</h1><p><b>Prototipo formato TAPIR</b></p>'
-           '<p><b>'+str(len(rows))+' finding operativi</b> · '+str(ntarget)+' target · periodo '+period+'</p>'
+    cover=('<div class="coverbox"><h1>'+html.escape(title)+'</h1>'
+           '<p><b>'+str(len(rows))+' finding</b> · '+str(ntarget)+' target · periodo '+period+'</p>'
            '<p>Timezone operativo del planner: <b>'+html.escape(tz)+'</b></p>'
-           '<p>Ruoli: PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · '
-           'EXTRA = ulteriore occasione valida della stessa classe, non fra le tre principali.</p></div>')
+           '<p>Ruoli: '+role_legend+'</p></div>')
     disclaimer=('<div class="disclaimer"><b>Gli eventi inclusi sono selezionati dal UAN Transit Planner '
-                'secondo policy UAN v2.1.1.</b><br/>Orari dell\'indice: '+html.escape(tz)+'.<br/>'
+                'secondo policy UAN v2.1.1.</b><br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
                 'I dati e gli orari mostrati nelle tabelle TAPIR sottostanti sono quelli originali TAPIR '
-                'e possono essere in UTC.<br/>TAPIR è usato qui come formato di presentazione; '
-                'classificazione e selezione sono determinate dal planner.</div>')
+                'e possono essere espressi in UTC.<br/>TAPIR è utilizzato come formato di presentazione '
+                'dettagliato; classificazione, selezione e verifiche operative sono determinate dal planner.</div>')
     tapir_band='<h2 class="tapirband">OUTPUT TAPIR ORIGINALE — orari della tabella TAPIR: UTC</h2>'
     body_html=(cover
                +'<h2 class="monthhdr">Indice cronologico (ora locale '+html.escape(tz)+')</h2>'
                +'\n'.join(idx)+disclaimer+tapir_band+intro+'\n'.join(body))
-    doc=_HEAD.format(title='UAN - PRIMA SCELTA (prototipo TAPIR)',assets=assets,body=body_html)
+    doc=_HEAD.format(title=title,assets=assets+DOSSIER_CSS,body=body_html)
     return doc,None
 
 
@@ -439,13 +487,6 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     (archive/'risultati.json').write_text(json.dumps(events,ensure_ascii=False,indent=2))
     (archive/'target_esclusi.json').write_text(json.dumps(rejections,ensure_ascii=False,indent=2))
     counts=Counter(e['category'] for e in events)
-    note=('Policy UAN v2.1: PRIMARY + BACKUP1 + BACKUP2 sono le tre raccomandazioni principali '
-          'per target (pool P1, qualita\' prima della separazione: >= '
-          +str(int(p['backup_preferred_separation_days']))+' giorni, fallback >= '
-          +str(int(p['backup_fallback_separation_days']))+'): sono raccomandazioni, NON un filtro. '
-          'EXTRA = ulteriore occasione valida della stessa classe, non nascosta. '
-          'Percentuali di copertura/baseline ricalcolate in modo indipendente; TAPIR resta nel dettaglio per evento. '
-          'Tutti gli eventi sono conservati in 9_ARCHIVIO_COMPLETO.')
     # Calendari semanticamente puri: 1=PRIMA SCELTA+P1, 2=ALTERNATIVE+P1; 3=review curata.
     # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1.
     tz=p['timezone']
@@ -453,29 +494,50 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     cal2=calendar_rows(events,'ALTERNATIVE')
     cal0=operational_rows(events)
     rev3=curated_review_rows(events,p)
-    (archive/'1_PRIMA_SCELTA.html').write_text(calendar_document(cal1,'CALENDARIO OPERATIVO - PRIMA SCELTA',tz,target_map,p),encoding='utf-8')
-    (archive/'2_ALTERNATIVE.html').write_text(calendar_document(cal2,'ALTERNATIVE - occasioni operative',tz,target_map,p),encoding='utf-8')
+    # 0_CALENDARIO_OPERATIVO: dashboard sintetica del planner (invariata).
     (archive/'0_CALENDARIO_OPERATIVO.html').write_text(calendar_document(cal0,'CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',tz,target_map,p),encoding='utf-8')
-    write_calendar_files(archive,cal1)
     write_calendar_files(archive,cal0,'0_CALENDARIO_OPERATIVO')
+    if cal0:
+        if not calendar_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0,tz,target_map,p):
+            raise ValueError('Rendering PDF fallito per 0_CALENDARIO_OPERATIVO (chromium)')
+    else:
+        make_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO',[],target_map,p)
     manifest['reporting']={'calendar_mode':'chronological','timezone':tz,
         'first_choice_scope':'all PRIMA SCELTA + P1',
         'selection_roles_preserved':True,'extra_events_visible':True,
         'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA'),
         'operational_calendar_events':len(cal0),
-        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1'}
-    pdfs=[(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0),
-          (out/'1_PRIMA_SCELTA.pdf','PRIMA SCELTA',cal1),
-          (out/'2_ALTERNATIVE.pdf','ALTERNATIVE',cal2),
-          (out/'3_DA_VALUTARE.pdf','DA VALUTARE',rev3)]
-    for target,title,rows in pdfs:
-        if not rows:
-            make_pdf(target,title,[],target_map,p); continue
-        try:
-            if calendar_pdf(target,title,rows,tz,target_map,p): continue
-        except (OSError,KeyError):
-            pass
-        make_pdf(target,title,rows,target_map,p)
+        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1',
+        'dossiers':{'1_PRIMA_SCELTA':len(cal1),'2_ALTERNATIVE':len(cal2),'3_DA_VALUTARE':len(rev3)}}
+    # Dossier 1/2/3: dettaglio nel formato TAPIR autentico (renderer downstream).
+    role_std='PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · EXTRA = ulteriore occasione valida della stessa classe'
+    dossiers=[('1_PRIMA_SCELTA','PRIMA SCELTA',cal1,role_std),
+              ('2_ALTERNATIVE','ALTERNATIVE',cal2,role_std),
+              ('3_DA_VALUTARE','DA VALUTARE — shortlist di review',rev3,
+               role_std+' · REVIEW = evento nella shortlist di review del target')]
+    for base,cat,rows,legend in dossiers:
+        # Presentation assets: ensure every dossier row has its authentic TAPIR fragment.
+        # Purely presentational queries; classification/selection/score are never touched.
+        raw=archive/'dati_originali';engine=raw/'tapir_source'
+        tmap={t['name']:t for t in targets}
+        made=0
+        for idx,e in enumerate(rows):
+            if e.get('tapir_event_html') and (archive/e['tapir_event_html']).is_file():
+                continue
+            t=tmap.get(e['name'])
+            if t is None or not engine.is_dir():
+                raise ValueError('Frammento TAPIR mancante e non rigenerabile per '+e['event_id'])
+            folder=archive/slug(e['name'])
+            e['tapir_event_html']=tapir_event_html(t,p,e,engine,raw,folder,idx)
+            made+=1
+        doc,broken=tapir_dossier_document(rows,archive,tz,'UAN - '+cat,legend)
+        if doc is None:
+            raise ValueError('Frammento TAPIR mancante per '+broken
+                             +': rigenerare le tabelle evento prima del reporting (nessuna promozione automatica)')
+        (out/(base+'.html')).write_text(doc,encoding='utf-8')
+        if not _chromium_render(doc,out/(base+'.pdf')):
+            raise ValueError('Rendering PDF fallito per '+base+' (chromium)')
+        print(f'Dossier {base}: {len(rows)} finding, {made} tabelle TAPIR generate',flush=True)
     index=[]
     target_summaries=[]
     style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'

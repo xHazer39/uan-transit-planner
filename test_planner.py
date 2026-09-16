@@ -436,14 +436,14 @@ class CalendarChecks(unittest.TestCase):
 
 class PrototypeChecks(unittest.TestCase):
     def setUp(self):
-        from reports import prototype_rows,prototype_document
+        from reports import prototype_rows,tapir_dossier_document
         from datetime import datetime,timezone,timedelta
         import tempfile
         self.prototype_rows=prototype_rows
-        self.prototype_document=prototype_document
+        self.document=tapir_dossier_document
         self.tmp=tempfile.TemporaryDirectory()
         self.archive=self.tmp.name
-        frag='<table id="target_table"><tr><th>Name</th></tr><tr><td>MARKER_TAPIR_ROW</td></tr></table>'
+        frag='<table id="target_table" class="display"><tr><th>Name</th></tr><tr><td>MARKER_TAPIR_ROW</td></tr></table>'
         page=('<!doctype html><html><head><style>.x{}</style></head><body>'
               '<p>Only 1 target matches your constraints. Searching for observable transits over 1.0 days...</p>'
               +frag+'</body></html>')
@@ -453,6 +453,7 @@ class PrototypeChecks(unittest.TestCase):
         self.base=datetime(2026,10,1,22,0,tzinfo=timezone.utc)
         self.timedelta=timedelta
         self.p=dict(backup_preferred_separation_days=7,backup_fallback_separation_days=3)
+        self.legend='PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · EXTRA = ulteriore occasione valida'
     def tearDown(self):
         self.tmp.cleanup()
     def ev(self,name,cycle,days,cat='PRIMA SCELTA',log='P1',score=90.0):
@@ -460,6 +461,10 @@ class PrototypeChecks(unittest.TestCase):
         return dict(name=name,cycle=cycle,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
                     category=cat,quality_class=cat,logistics_class=log,score=score,
                     selection_role=None,tapir_event_html='T/frag.html')
+    def roles(self,events):
+        from reports import compute_selection
+        sel=compute_selection(events,self.p)
+        return {(e['name'],e['cycle']):e['selection_role'] for roles in sel.values() for _,e in roles}
     def test_subset_exact_chronological_no_duplicates(self):
         events=[self.ev('Zeta b',1,9),self.ev('Alpha b',2,8),self.ev('B b',3,10,'ALTERNATIVE'),
                 self.ev('C b',4,11,'DA VALUTARE'),self.ev('D b',5,12,log='P2')]
@@ -475,28 +480,73 @@ class PrototypeChecks(unittest.TestCase):
         byid={r['event_id']:r for r in rows}
         for (name,cycle),role in roles.items():
             self.assertEqual(byid[slug(name)+'-c'+str(cycle)]['display_role'],role)
-    def roles(self,events):
-        from reports import compute_selection
-        sel=compute_selection(events,self.p)
-        return {(e['name'],e['cycle']):e['selection_role'] for roles in sel.values() for _,e in roles}
-    def test_document_contains_index_disclaimer_tapir(self):
-        events=[self.ev('WASP-77 A b',1,0,score=99.9),self.ev('A b',2,9)]
+    def test_document_contains_index_disclaimer_tapir_unique_ids_anchors(self):
+        import re
+        events=[self.ev('WASP-77 A b',1,0,score=99.9),self.ev('A b',2,9),self.ev('B b',3,17)]
         self.roles(events)
         rows=self.prototype_rows(events)
-        doc,broken=self.prototype_document(rows,Path(self.archive),'Europe/Rome')
+        doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
         self.assertIsNone(broken)
-        for marker in ['UAN - PRIMA SCELTA','Prototipo formato TAPIR','OUTPUT TAPIR ORIGINALE',
-                       'policy UAN v2.1.1','MARKER_TAPIR_ROW','WASP-77 A b','Europe/Rome',
-                       'target_table','PRIMARY']:
+        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.1.1',
+                       'MARKER_TAPIR_ROW','WASP-77 A b','Europe/Rome','PRIMARY','BACKUP1','EXTRA']:
             self.assertIn(marker,doc)
         self.assertEqual(doc.count('MARKER_TAPIR_ROW'),len(rows))
+        ids=re.findall(r'\bid="([^"]+)"',doc)
+        self.assertEqual(len(ids),len(set(ids)),'ID HTML duplicati')
+        anchors=[i for i in ids if i.startswith('event-')]
+        self.assertEqual(len(anchors),len(rows))
+        for a in anchors:
+            self.assertIn('id="'+a+'"',doc)
+        for href in re.findall(r'href="#(event-[^"]+)"',doc):
+            self.assertIn(href,anchors)
+    def test_wasp77_regression_in_document(self):
+        events=[self.ev('WASP-77 A b',1050,0,score=99.9)]
+        self.roles(events)
+        rows=self.prototype_rows(events)
+        rows[0]['selection_role']='PRIMARY';rows[0]['display_role']='PRIMARY'
+        doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
+        self.assertIn('>WASP-77 A b</b> — PRIMARY',doc)
+    def test_kelt16_alternative_not_in_prima_dossier(self):
+        from zoneinfo import ZoneInfo
+        k=self.ev('KELT-16 b',9,0,'ALTERNATIVE',score=96.2)
+        k['mid_local']=datetime(2026,9,21,23,16,tzinfo=ZoneInfo('Europe/Rome')).isoformat()
+        k['reason_codes']=['MOON_MODERATA']
+        rows=self.prototype_rows([k,self.ev('A b',2,9)])
+        self.assertEqual([r['event_id'] for r in rows],['A_b-c2'])
+        doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
+        self.assertNotIn('KELT-16 b',doc)
     def test_broken_fragment_reported_not_hidden(self):
         events=[self.ev('A b',1,0)]
         events[0]['tapir_event_html']='T/inesistente.html'
         rows=self.prototype_rows(events)
-        doc,broken=self.prototype_document(rows,Path(self.archive),'Europe/Rome')
+        doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
         self.assertIsNone(doc)
         self.assertEqual(broken,'A_b-c1')
+    def test_renderer_does_not_mutate_events(self):
+        import copy
+        events=[self.ev('A b',1,0),self.ev('B b',2,9)]
+        self.roles(events)
+        snap=copy.deepcopy(events)
+        rows=self.prototype_rows(events)
+        self.document(rows,Path(self.archive),'Europe/Rome','PRIMA SCELTA',self.legend)
+        for a,b in zip(events,snap):
+            self.assertEqual(a,b)
+    def test_year_boundary_and_dst_in_document(self):
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        d1=self.ev('A b',1,0);d2=self.ev('B b',2,92)
+        d1['mid_local']=datetime(2026,12,21,23,0,tzinfo=ZoneInfo('Europe/Rome')).isoformat()
+        d2['mid_local']=datetime(2027,1,10,22,0,tzinfo=ZoneInfo('Europe/Rome')).isoformat()
+        rows=self.prototype_rows([d2,d1])
+        doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
+        self.assertIsNone(broken)
+        self.assertLess(doc.index('DICEMBRE 2026'),doc.index('GENNAIO 2027'))
+        # DST: gli eventi invernali sono CET (+01) e l'ordine resta quello reale.
+        # (coppie estivo/invernali coperte da test_dst_europe_rome_offsets)
+        from datetime import datetime as D
+        mids=[D.fromisoformat(r['mid_local']) for r in rows]
+        self.assertEqual(mids,sorted(mids))
+        self.assertEqual({m.utcoffset().total_seconds() for m in mids},{3600.0})
 
 
 if __name__=='__main__': unittest.main()

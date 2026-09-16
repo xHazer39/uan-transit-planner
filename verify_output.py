@@ -8,7 +8,8 @@ from astropy.coordinates import SkyCoord,EarthLocation
 from astropy.time import Time
 from observing import analyze,coverage
 from planner import read_csv
-from reports import compute_selection,slug
+from reports import compute_selection,slug,curated_review_rows
+import re
 
 out=Path(sys.argv[1]);archive=out/'9_ARCHIVIO_COMPLETO';raw=archive/'dati_originali'
 m=json.loads((archive/'manifest.json').read_text());events=json.loads((archive/'risultati.json').read_text())
@@ -91,6 +92,28 @@ for f in ['0_CALENDARIO_OPERATIVO.html','0_CALENDARIO_OPERATIVO.csv']:
 if any(t['name']=='KELT-16 b' for t in targets):
     kel=[r for r in op if r['target']=='KELT-16 b' and r['mid_local'].startswith('2026-09-21')]
     assert kel and kel[0]['quality_class']=='ALTERNATIVE',('KELT-16 21/09 missing or reclassified',kel)
+# Dossier 1/2/3: set esatti, anchor, nessun ID duplicato, regression cases.
+exp_d={'1_PRIMA_SCELTA':{('event-'+(slug(e['name'])+'-c'+str(e['cycle'])).lower())
+        for e in events if e['quality_class']=='PRIMA SCELTA' and e['logistics_class']=='P1'},
+       '2_ALTERNATIVE':{('event-'+(slug(e['name'])+'-c'+str(e['cycle'])).lower())
+        for e in events if e['quality_class']=='ALTERNATIVE' and e['logistics_class']=='P1'}}
+exp3=curated_review_rows(events,p)
+exp_d['3_DA_VALUTARE']={'event-'+(slug(e['name'])+'-c'+str(e['cycle'])).lower() for e in exp3}
+for base,anchors_expected in exp_d.items():
+    hp=out/(base+'.html');assert hp.is_file(),('missing',base+'.html')
+    assert (out/(base+".pdf")).is_file(),('missing',base+'.pdf')
+    doc=hp.read_text()
+    ids=re.findall(r'\bid="([^"]+)"',doc)
+    assert len(ids)==len(set(ids)),('duplicated html ids',base)
+    found=set(re.findall(r'id="(event-[^"]+)"',doc))
+    assert found==anchors_expected,('dossier set mismatch',base,len(found),len(anchors_expected))
+    for href in re.findall(r'href="#(event-[^"]+)"',doc):
+        assert href in found,('anchor without target',base,href)
+assert 'event-'+(slug('WASP-77 A b')+'-c'+str(next(e['cycle'] for e in events
+        if e['name']=='WASP-77 A b' and e['mid_local'].startswith('2026-11-10')))).lower() in exp_d['1_PRIMA_SCELTA']
+k16='event-'+(slug('KELT-16 b')+'-c'+str(next(e['cycle'] for e in events
+     if e['name']=='KELT-16 b' and e['mid_local'].startswith('2026-09-21T23:16')))).lower()
+assert k16 in exp_d['2_ALTERNATIVE'] and k16 not in exp_d['1_PRIMA_SCELTA'],('KELT-16 misplaced',)
 # Re-evaluate up to three partial events at 30-second sampling, independent of rendering.
 convergence=[]
 for e in [e for e in events if 1<e['transit_percent']<99][:3]:

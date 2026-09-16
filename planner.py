@@ -22,7 +22,7 @@ from urllib.request import urlopen,Request
 from zoneinfo import ZoneInfo
 from astropy.time import Time
 from observing import number,analyze
-from reports import slug,write_reports,BASE,compute_selection
+from reports import slug,write_reports,BASE,compute_selection,run_perl
 
 ROOT=Path(__file__).resolve().parent
 NASA='https://exoplanetarchive.ipac.caltech.edu/'
@@ -130,20 +130,6 @@ def choose_ephemeris(rows,begin,end):
     return chosen,excluded
 
 
-def perl_env():
-    env=os.environ.copy()
-    env['PERL5LIB']=str(Path.home()/'perl5/lib/perl5')+(os.pathsep+env['PERL5LIB'] if env.get('PERL5LIB') else '')
-    return env
-
-
-def run_perl(script,cwd,args=None,query=None):
-    env=perl_env()
-    if query is not None:
-        env.update(REQUEST_METHOD='GET',QUERY_STRING=urlencode(query),GATEWAY_INTERFACE='CGI/1.1')
-    proc=subprocess.run(['perl',str(script),*(args or [])],cwd=cwd,env=env,text=True,capture_output=True,timeout=180)
-    return proc
-
-
 def make_catalog(names,rows,composite,engine,raw,start,end,rejected):
     targets=[];selected={};begin=Time(str(start)).jd;finish=Time(str(end)).jd
     for name in names:
@@ -224,29 +210,6 @@ def tapir_events(t,p,start,days,engine,raw,folder):
                     destination[key]=r
         offset+=n
     return list(all_events.values()),ground_events,queries
-
-
-def tapir_event_html(t,p,e,engine,raw,folder,idx):
-    """One ground TAPIR HTML query bounded to a single event: table for the category PDFs."""
-    mid_local=datetime.fromisoformat(e['mid_local'])
-    evening=mid_local.date() if mid_local.hour>=12 else mid_local.date()-timedelta(days=1)
-    days=1 if float(t['period'])<2.2 else 2
-    query=dict(observatory_string='Specified_Lat_Long',observatory_latitude=p['latitude'],
-               observatory_longitude=p['longitude'],timezone=p['timezone'],use_utc=1,
-               start_date=evening.strftime('%m-%d-%Y'),days_to_print=days,days_in_past=0,
-               minimum_start_elevation=0,minimum_end_elevation=0,and_vs_or='or',minimum_ha=-12,
-               maximum_ha=12,baseline_hrs=p['baseline_hours'],show_unc=int(p['extend_uncertainty']),
-               minimum_depth=-999,maximum_V_mag=99,minimum_priority=0,twilight=p['twilight_deg'],
-               target_string='^'+re.escape(t['name'])+'$',max_airmass=4,single_object=0,space=0,print_html=1)
-    proc=run_perl(engine/'print_transits.cgi',engine,query=query)
-    name=f'{slug(t["name"])}_event_{idx:04d}'
-    (raw/(name+'.txt')).write_text(proc.stdout)
-    (raw/(name+'.log')).write_text(proc.stderr)
-    if proc.returncode: raise ValueError('TAPIR fallito (evento): '+proc.stderr[-200:])
-    body=proc.stdout[proc.stdout.lower().find('<!doctype'):] if '<!doctype' in proc.stdout.lower() else proc.stdout[proc.stdout.lower().find('<html'):]
-    body=re.sub(r'<head[^>]*>',lambda m:m.group(0)+'<base href="'+BASE+'">',body,count=1,flags=re.I)
-    (folder/f'tapir_event_{idx:04d}.html').write_text(body)
-    return f'{folder.name}/tapir_event_{idx:04d}.html'
 
 
 def arguments(argv=None):

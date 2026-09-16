@@ -179,6 +179,29 @@ Il programma e il profilo sono descritti in README.md. L'output finale è:
 - Future work (NON implementato, YAGNI): conflict detection, scheduling solver,
   modelli telescopio/camera, SNR, stelle di confronto Gaia, priorita' ExoClock, meteo.
 
+# Dossier 1/2/3 nel formato TAPIR autentico (16 settembre 2026)
+
+- Produttivizzazione del renderer dello spike (commit a58f37d): i dossier ufficiali
+  1_PRIMA_SCELTA, 2_ALTERNATIVE e 3_DA_VALUTARE sono ora pagine TAPIR autentiche
+  aggregate (HTML sorgente -> Chromium -> PDF), ordine cronologico globale per
+  mid_local (Europe/Rome), indice con anchor interni, disclaimer source-of-truth.
+- Contenuti: 1 = PRIMA SCELTA+P1 (97 eventi/34 target, 52 pagine, 2.30 MB);
+  2 = ALTERNATIVE+P1 (116/31, 61 pagine, 2.76 MB); 3 = shortlist DV corrente
+  (174/54, 92 pagine, 4.16 MB). 0_CALENDARIO_OPERATIVO: byte-identico (5 pagine).
+- Fix spike: ID HTML unificati via namespace per evento (zero duplicati);
+  header mese + primo finding = blocco indivisibile (niente header orfani);
+  banda TAPIR inizia su pagina nuova (niente pagina quasi vuota);
+  indice chiuso correttamente (era la causa dell'impaginazione rotta).
+- 27 frammenti TAPIR della shortlist DV generati lazialmente in reporting
+  (query di sola presentazione: nessun dato astronomico ricalcolato).
+- Policy v2.1.1 invariata: quality/logistics/score/PRIMARY-BACKUP-EXTRA verificati
+  identici prima/dopo (snapshot 13264 eventi). risultati.json/csv e 0_CALENDARIO
+  byte-identici. Regression: WASP-77 10/11 PRIMARY in 1; KELT-16 21/09 ALTERNATIVE
+  EXTRA in 2 e assente da 1.
+- 39/39 test (nuovi: ID unici, anchor validi, mutazione assente, confine anno+DST
+  nel documento, KELT-16 escluso da 1, frammento mancante = errore esplicito).
+  verify_output PASS (esteso: set dossier, ID unici, anchor, regression).
+
 Limiti: soglie euristiche; niente modello di strumentazione/meteo; effemeridi lineari,
 TTV segnalate, covarianza ed errore durata non propagati; orizzonte piano e rifrazione
 assente. IERS oltre l'intervallo disponibile genera un avviso di precisione a livello
