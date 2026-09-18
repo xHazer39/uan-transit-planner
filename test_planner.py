@@ -23,7 +23,7 @@ class PlannerChecks(unittest.TestCase):
     def test_classification(self):
         from observing import score, geometry_label, moon_risk
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
-           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,'full_transit_tolerance_percentage_points':1e-6,
+           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
            'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
            'timing_residual_limit_seconds':2}
@@ -75,7 +75,7 @@ class PlannerChecks(unittest.TestCase):
 
     def test_v21_classification_boundaries(self):
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
-           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,'full_transit_tolerance_percentage_points':1e-6,
+           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
            'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
            'timing_residual_limit_seconds':2}
