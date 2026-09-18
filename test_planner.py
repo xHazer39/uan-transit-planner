@@ -320,6 +320,11 @@ class CalendarChecks(unittest.TestCase):
         self.assertEqual([r['event_id'] for r in prima],['A_b-c1'])
         alt=self.calendar_rows(events,'ALTERNATIVE')
         self.assertEqual([r['display_role'] for r in alt],['BACKUP1'])
+    def test_partial_stale_favorable_label_is_excluded(self):
+        e=self.ev('A b',9,0,'ALTERNATIVE')
+        e['transit_percent']=99.999
+        self.assertEqual(self.calendar_rows([e],'ALTERNATIVE'),[])
+
     def test_unselected_prima_p1_is_extra(self):
         events=[self.ev('A b',1,0),self.ev('A b',2,9),self.ev('A b',3,18),self.ev('A b',4,27)]
         self.roles(events)
