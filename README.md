@@ -3,7 +3,7 @@
 CLI locale (Kubuntu) che pianifica le osservazioni di transiti esoplanetari:
 enumera i transiti con [TAPIR](https://github.com/elnjensen/Tapir), li **riclassifica e
 verifica in modo indipendente** con [Astropy](https://www.astropy.org/) secondo la
-**policy UAN v2.1.1**, e produce un pacchetto consegnabile alla sezione:
+**policy UAN v2.2.0**, e produce un pacchetto consegnabile alla sezione:
 calendario operativo, dossier nel formato TAPIR autentico, archivio completo e
 export per Google Calendar.
 
@@ -88,7 +88,7 @@ GaetanoTrovato_<timestamp>/
 le tabelle TAPIR incorporate sono in UTC e lo dicono. Le due fonti non si mescolano mai
 senza etichetta.
 
-## Policy UAN v2.1.1 (gerarchia rigida)
+## Policy UAN v2.2.0 (gerarchia rigida)
 
 Uno score alto **non compensa mai** un problema di livello superiore. Valutazione
 per evento, in ordine:
@@ -97,7 +97,7 @@ per evento, in ordine:
 |---|---|---|
 | 1 | Integrità temporale | residuo BJD > 2 s, TTV, σ centro > 10 min → `DA VALUTARE` |
 | 2 | Geometria del target | quota teorica < 15° → `NON CONSIGLIATO DAL SITO` (15-20 MOLTO DIFFICILE, 20-30 MARGINALE, 30-40 BUONO, ≥40 MOLTO FAVOREVOLE) |
-| 3 | Copertura transito | < 90% → `DA VALUTARE`; 90-99.5% → max `ALTERNATIVE`; ≥ 99.5% → eleggibile PRIMA SCELTA |
+| 3 | Copertura transito | **solo 100%** (entro tolleranza numerica 0,000001 punti percentuali) può essere `PRIMA SCELTA` o `ALTERNATIVE`; qualsiasi copertura inferiore → `DA VALUTARE` |
 | 4 | Baseline per lato | < 50% su un lato → `DA VALUTARE`; 50-79.9% → max `ALTERNATIVE`; ≥ 80% entrambi → eleggibile PRIMA SCELTA |
 | 5 | Quota evento (assoluta) | centro < 30° → `DA VALUTARE`; centro ≥ 30° ma minimo < 30° → max `ALTERNATIVE` |
 | 6 | Luna | ESTREMA → `DA VALUTARE`; ALTA/MODERATA → max `ALTERNATIVE`; BASSA → nessun downgrade |
@@ -130,6 +130,8 @@ visibili, non nascosti.
 notte nautica −12° × quota ≥ 20°, griglia 120 s): le percentuali TAPIR non sono mai
 usate come verità (conservate come dati originali, con scarto segnalato).
 
+**Vincolo di completezza:** i calendari/dossier favorevoli (`PRIMA SCELTA` e `ALTERNATIVE`) contengono esclusivamente transiti con copertura ricalcolata pari al 100%; 99,9% non viene arrotondato o promosso.
+
 ## Provenance e riproducibilità
 
 `manifest.json` distingue esplicitamente:
@@ -160,7 +162,7 @@ unici, **identity di ogni frammento TAPIR incorporato**, coerenza manifest.
 Struttura del codice (tutto in 4 moduli):
 
 - `planner.py` — CLI, catalogo NASA, scelta effemeridi, orchestrazione TAPIR, manifest
-- `observing.py` — policy v2.1.1: classify, moon_risk, score, finestre Astropy, analisi evento
+- `observing.py` — policy v2.2.0: classify, moon_risk, score, finestre Astropy, analisi evento
 - `reports.py` — calendari, dossier TAPIR, export ICS/CSV, riepiloghi, provenance
 - `verify_output.py` — audit post-generazione di un pacchetto
 
