@@ -90,6 +90,7 @@ op_mids=[datetime.fromisoformat(r['mid_local']) for r in op]
 assert op_mids==sorted(op_mids),('operational calendar not chronological',)
 assert all(r['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and r['logistics_class']=='P1' for r in op)
 assert m['reporting']['operational_calendar_events']==len(op)
+assert m['reporting']['operational_scope']=='(PRIMA SCELTA or ALTERNATIVE) and P1 and transit_percent == 100'
 for f in ['0_CALENDARIO_OPERATIVO.html','0_CALENDARIO_OPERATIVO.csv']:
     assert (archive/f).is_file(),('missing',f)
 if any(t['name']=='KELT-16 b' for t in targets):
