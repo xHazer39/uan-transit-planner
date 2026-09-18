@@ -38,8 +38,7 @@ for e in events:
         assert datetime.fromisoformat(e['egress_local'])<=datetime.fromisoformat(e['practical_transit_end_limit_local'])
         assert datetime.fromisoformat(e['ingress_local'])>=datetime.fromisoformat(e['practical_start_local'])
     if e['category'] in ('PRIMA SCELTA','ALTERNATIVE'):
-        tol=p.get('full_transit_tolerance_percentage_points',1e-6)
-        assert e['transit_percent']>=100-tol,(e['name'],e['category'],e['transit_percent'])
+        assert e['transit_percent']>=100,(e['name'],e['category'],e['transit_percent'])
     if e['category']=='PRIMA SCELTA':
         assert e['altitude_min_deg']>=p['preferred_altitude_deg']-0.05
         assert min(e['baseline_before_percent'],e['baseline_after_percent'])>=p['baseline_good_percent']-0.05
