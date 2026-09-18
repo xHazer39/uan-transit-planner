@@ -121,6 +121,8 @@ class InputChecks(unittest.TestCase):
         p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
         with self.assertRaises(ValueError): validate_profile(dict(p,latitude=100))
         with self.assertRaises(ValueError): validate_profile(dict(p,session_end='25:00'))
+        with self.assertRaises(ValueError): validate_profile(dict(p,transit_operational_percent=99.5))
+        with self.assertRaises(ValueError): validate_profile(dict(p,first_choice_min_percent=99.999))
 
 class EdgeChecks(unittest.TestCase):
     def test_dst_ambiguous_and_missing_end(self):
