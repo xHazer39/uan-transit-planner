@@ -520,7 +520,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     (archive/'target_esclusi.json').write_text(json.dumps(rejections,ensure_ascii=False,indent=2))
     counts=Counter(e['category'] for e in events)
     # Calendari semanticamente puri: 1=PRIMA SCELTA+P1, 2=ALTERNATIVE+P1; 3=review curata.
-    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1.
+    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1 e copertura 100%.
     tz=p['timezone']
     cal1=calendar_rows(events,'PRIMA SCELTA')
     cal2=calendar_rows(events,'ALTERNATIVE')
@@ -537,7 +537,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         'selection_roles_preserved':True,'extra_events_visible':True,
         'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA'),
         'operational_calendar_events':len(cal0),
-        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1',
+        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1 and transit_percent == 100',
         'dossiers':{'1_PRIMA_SCELTA':len(cal1),'2_ALTERNATIVE':len(cal2),'3_DA_VALUTARE':len(rev3)}}
     # Dossier 1/2/3: dettaglio nel formato TAPIR autentico (renderer downstream).
     role_std='PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · EXTRA = ulteriore occasione valida della stessa classe'
