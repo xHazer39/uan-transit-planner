@@ -97,7 +97,7 @@ per evento, in ordine:
 |---|---|---|
 | 1 | Integrità temporale | residuo BJD > 2 s, TTV, σ centro > 10 min → `DA VALUTARE` |
 | 2 | Geometria del target | quota teorica < 15° → `NON CONSIGLIATO DAL SITO` (15-20 MOLTO DIFFICILE, 20-30 MARGINALE, 30-40 BUONO, ≥40 MOLTO FAVOREVOLE) |
-| 3 | Copertura transito | **solo 100%** (entro tolleranza numerica 0,000001 punti percentuali) può essere `PRIMA SCELTA` o `ALTERNATIVE`; qualsiasi copertura inferiore → `DA VALUTARE` |
+| 3 | Copertura transito | **solo 100%** può essere `PRIMA SCELTA` o `ALTERNATIVE`; qualsiasi copertura inferiore → `DA VALUTARE` |
 | 4 | Baseline per lato | < 50% su un lato → `DA VALUTARE`; 50-79.9% → max `ALTERNATIVE`; ≥ 80% entrambi → eleggibile PRIMA SCELTA |
 | 5 | Quota evento (assoluta) | centro < 30° → `DA VALUTARE`; centro ≥ 30° ma minimo < 30° → max `ALTERNATIVE` |
 | 6 | Luna | ESTREMA → `DA VALUTARE`; ALTA/MODERATA → max `ALTERNATIVE`; BASSA → nessun downgrade |
@@ -130,7 +130,7 @@ visibili, non nascosti.
 notte nautica −12° × quota ≥ 20°, griglia 120 s): le percentuali TAPIR non sono mai
 usate come verità (conservate come dati originali, con scarto segnalato).
 
-**Vincolo di completezza:** i calendari/dossier favorevoli (`PRIMA SCELTA` e `ALTERNATIVE`) contengono esclusivamente transiti con copertura ricalcolata pari al 100%; 99,9% non viene arrotondato o promosso.
+**Vincolo di completezza:** i calendari/dossier favorevoli (`PRIMA SCELTA` e `ALTERNATIVE`) contengono esclusivamente transiti con copertura ricalcolata pari al 100% esatto; 99,999% non viene arrotondato o promosso.
 
 ## Provenance e riproducibilità
 
