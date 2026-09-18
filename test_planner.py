@@ -23,7 +23,7 @@ class PlannerChecks(unittest.TestCase):
     def test_classification(self):
         from observing import score, geometry_label, moon_risk
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
-           'visibility_altitude_deg':20,'transit_operational_percent':90,'first_choice_min_percent':99.5,
+           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,'full_transit_tolerance_percentage_points':1e-6,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
            'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
            'timing_residual_limit_seconds':2}
@@ -41,9 +41,9 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(classify(dict(e,uncertainty_minutes=None),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,moon_risk=None),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,baseline_after_percent=0),p)[0],'DA VALUTARE')
-        # v2.1 coverage: >=99.5 eligible PRIMA; 90-99.5 max ALTERNATIVE; <90 DA VALUTARE.
-        self.assertEqual(classify(dict(e,transit_percent=99.4),p)[0],'ALTERNATIVE')
-        self.assertEqual(classify(dict(e,transit_percent=89),p)[0],'DA VALUTARE')
+        # Full-transit policy: only 100% coverage may be PRIMA/ALTERNATIVE; any partial transit is DA VALUTARE.
+        self.assertEqual(classify(dict(e,transit_percent=99.999),p)[0],'DA VALUTARE')
+        self.assertEqual(classify(dict(e,transit_percent=95),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,baseline_after_percent=60),p)[0],'ALTERNATIVE')
         self.assertEqual(classify(dict(e,baseline_after_percent=40),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,moon_risk='ALTA'),p)[0],'ALTERNATIVE')
@@ -75,7 +75,7 @@ class PlannerChecks(unittest.TestCase):
 
     def test_v21_classification_boundaries(self):
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
-           'visibility_altitude_deg':20,'transit_operational_percent':90,'first_choice_min_percent':99.5,
+           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,'full_transit_tolerance_percentage_points':1e-6,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
            'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
            'timing_residual_limit_seconds':2}
@@ -87,9 +87,9 @@ class PlannerChecks(unittest.TestCase):
                   moon_up_during_observable=False,moon_illumination_percent=5,moon_separation_deg=120,
                   timing_check_failed=False)
         c=lambda **kw: classify(dict(base,**kw),p)[0]
-        self.assertEqual(c(transit_percent=89.9),'DA VALUTARE')
-        self.assertEqual(c(transit_percent=95),'ALTERNATIVE')
-        self.assertEqual(c(transit_percent=99.5),'PRIMA SCELTA')
+        self.assertEqual(c(transit_percent=95),'DA VALUTARE')
+        self.assertEqual(c(transit_percent=99.999),'DA VALUTARE')
+        self.assertEqual(c(transit_percent=100),'PRIMA SCELTA')
         self.assertEqual(c(baseline_after_percent=49.9),'DA VALUTARE')
         self.assertEqual(c(baseline_after_percent=60),'ALTERNATIVE')
         self.assertEqual(c(baseline_after_percent=80),'PRIMA SCELTA')
