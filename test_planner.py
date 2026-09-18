@@ -23,7 +23,7 @@ class PlannerChecks(unittest.TestCase):
     def test_classification(self):
         from observing import score, geometry_label, moon_risk
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
-           'visibility_altitude_deg':20,'transit_operational_percent':90,'first_choice_min_percent':99.5,
+           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
            'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
            'timing_residual_limit_seconds':2}
@@ -41,15 +41,15 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(classify(dict(e,uncertainty_minutes=None),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,moon_risk=None),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,baseline_after_percent=0),p)[0],'DA VALUTARE')
-        # v2.1 coverage: >=99.5 eligible PRIMA; 90-99.5 max ALTERNATIVE; <90 DA VALUTARE.
-        self.assertEqual(classify(dict(e,transit_percent=99.4),p)[0],'ALTERNATIVE')
-        self.assertEqual(classify(dict(e,transit_percent=89),p)[0],'DA VALUTARE')
+        # Full-transit policy: only 100% coverage may be PRIMA/ALTERNATIVE; any partial transit is DA VALUTARE.
+        self.assertEqual(classify(dict(e,transit_percent=99.999),p)[0],'DA VALUTARE')
+        self.assertEqual(classify(dict(e,transit_percent=95),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,baseline_after_percent=60),p)[0],'ALTERNATIVE')
         self.assertEqual(classify(dict(e,baseline_after_percent=40),p)[0],'DA VALUTARE')
         self.assertEqual(classify(dict(e,moon_risk='ALTA'),p)[0],'ALTERNATIVE')
         self.assertEqual(classify(dict(e,moon_risk='ESTREMA'),p)[0],'DA VALUTARE')
         self.assertIn('MOON_EXTREME',classify(dict(e,moon_risk='ESTREMA'),p)[2])
-        # Moon risk: the audit v2.1 examples.
+        # Moon risk: the audit v2.2.0 examples.
         self.assertEqual(moon_risk(3,111,True),'BASSA')
         self.assertEqual(moon_risk(90,120,True),'BASSA')
         self.assertEqual(moon_risk(97,54,True),'ALTA')
@@ -73,9 +73,9 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(geometry_label(35,p),'BUONO')
         self.assertEqual(geometry_label(55,p),'MOLTO FAVOREVOLE')
 
-    def test_v21_classification_boundaries(self):
+    def test_v220_classification_boundaries(self):
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
-           'visibility_altitude_deg':20,'transit_operational_percent':90,'first_choice_min_percent':99.5,
+           'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
            'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
            'timing_residual_limit_seconds':2}
@@ -87,9 +87,9 @@ class PlannerChecks(unittest.TestCase):
                   moon_up_during_observable=False,moon_illumination_percent=5,moon_separation_deg=120,
                   timing_check_failed=False)
         c=lambda **kw: classify(dict(base,**kw),p)[0]
-        self.assertEqual(c(transit_percent=89.9),'DA VALUTARE')
-        self.assertEqual(c(transit_percent=95),'ALTERNATIVE')
-        self.assertEqual(c(transit_percent=99.5),'PRIMA SCELTA')
+        self.assertEqual(c(transit_percent=95),'DA VALUTARE')
+        self.assertEqual(c(transit_percent=99.999),'DA VALUTARE')
+        self.assertEqual(c(transit_percent=100),'PRIMA SCELTA')
         self.assertEqual(c(baseline_after_percent=49.9),'DA VALUTARE')
         self.assertEqual(c(baseline_after_percent=60),'ALTERNATIVE')
         self.assertEqual(c(baseline_after_percent=80),'PRIMA SCELTA')
@@ -121,6 +121,8 @@ class InputChecks(unittest.TestCase):
         p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
         with self.assertRaises(ValueError): validate_profile(dict(p,latitude=100))
         with self.assertRaises(ValueError): validate_profile(dict(p,session_end='25:00'))
+        with self.assertRaises(ValueError): validate_profile(dict(p,transit_operational_percent=99.5))
+        with self.assertRaises(ValueError): validate_profile(dict(p,first_choice_min_percent=99.999))
 
 class EdgeChecks(unittest.TestCase):
     def test_dst_ambiguous_and_missing_end(self):
@@ -169,7 +171,7 @@ class SelectionChecks(unittest.TestCase):
     def ev(self,cycle,days,score,cat='PRIMA SCELTA'):
         mid=self.base+self.timedelta(days=days)
         return dict(name='X b',mid_utc=mid.isoformat(),mid_local=mid.isoformat(),category=cat,
-                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1')
+                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1',transit_percent=100)
     def roles(self,events):
         sel=self.compute_selection(events,self.p)['X b']
         return [(r,e['cycle'],e['category']) for r,e in sel]
@@ -216,6 +218,11 @@ class SelectionChecks(unittest.TestCase):
         # Best class wins over score: a DA VALUTARE night never becomes PRIMARY.
         mixed=[ev(10,0,99.0,'DA VALUTARE'),ev(11,9,50.0,'ALTERNATIVE')]
         self.assertEqual(compute_selection(mixed,p)['X b'][0][1]['cycle'],11)
+        # Even a stale favorable label is not enough: recommendations still require exact 100% coverage.
+        stale=[dict(ev(12,0,99.0,'ALTERNATIVE'),transit_percent=99.999)]
+        self.assertNotIn('X b',compute_selection(stale,p))
+        # A target with only DA VALUTARE events receives no PRIMARY/BACKUP recommendation.
+        self.assertNotIn('X b',compute_selection([ev(13,0,99.0,'DA VALUTARE')],p))
         # Non-P1 events are excluded from the operational pool.
         self.assertNotIn('Y b',compute_selection([dict(ev(20,0,99.0),name='Y b',logistics_class='P3')],p))
 
@@ -313,6 +320,11 @@ class CalendarChecks(unittest.TestCase):
         self.assertEqual([r['event_id'] for r in prima],['A_b-c1'])
         alt=self.calendar_rows(events,'ALTERNATIVE')
         self.assertEqual([r['display_role'] for r in alt],['BACKUP1'])
+    def test_partial_stale_favorable_label_is_excluded(self):
+        e=self.ev('A b',9,0,'ALTERNATIVE')
+        e['transit_percent']=99.999
+        self.assertEqual(self.calendar_rows([e],'ALTERNATIVE'),[])
+
     def test_unselected_prima_p1_is_extra(self):
         events=[self.ev('A b',1,0),self.ev('A b',2,9),self.ev('A b',3,18),self.ev('A b',4,27)]
         self.roles(events)
@@ -483,7 +495,7 @@ class PrototypeChecks(unittest.TestCase):
         rows=self.rows(events)
         doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
         self.assertIsNone(broken)
-        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.1.1',
+        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.2.0',
                        'MARKER_TAPIR_ROW','WASP-77 A b','Europe/Rome','PRIMARY','BACKUP1','EXTRA']:
             self.assertIn(marker,doc)
         self.assertEqual(doc.count('MARKER_TAPIR_ROW'),len(rows))

@@ -37,23 +37,26 @@ for e in events:
     if e['practical']:
         assert datetime.fromisoformat(e['egress_local'])<=datetime.fromisoformat(e['practical_transit_end_limit_local'])
         assert datetime.fromisoformat(e['ingress_local'])>=datetime.fromisoformat(e['practical_start_local'])
+    if e['category'] in ('PRIMA SCELTA','ALTERNATIVE'):
+        assert e['transit_percent']>=100,(e['name'],e['category'],e['transit_percent'])
     if e['category']=='PRIMA SCELTA':
-        assert e['transit_percent']>=p['first_choice_min_percent']-0.05,(e['name'],e['transit_percent'])
         assert e['altitude_min_deg']>=p['preferred_altitude_deg']-0.05
         assert min(e['baseline_before_percent'],e['baseline_after_percent'])>=p['baseline_good_percent']-0.05
         assert e['moon_risk']=='BASSA',('moon',e['name'],e['mid_utc'],e['moon_risk'])
-# Policy v2.1 selection: roles must be operational (P1) and temporally diversified.
+# Policy v2.2.0 selection: roles must be operational (P1) and temporally diversified.
 byt={}
 for e in events:
     if e.get('selection_role'): byt.setdefault(e['name'],[]).append(e)
 for name,es in byt.items():
     for e in es:
         assert e['logistics_class']=='P1',('selected not P1',name,e['mid_utc'])
+        assert e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE'),('selected review-only event',name,e['mid_utc'])
+        assert e['transit_percent']>=100,('selected partial transit',name,e['mid_utc'],e['transit_percent'])
         assert e['selection_role'] in ('PRIMARY','BACKUP1','BACKUP2')
     for e in es[1:]:
         gap=abs(e['mid_ts']-es[0]['mid_ts'])
         assert gap>=p['backup_fallback_separation_days']*86400-120,('backup too close',name,gap/86400)
-# Reporting calendar (v2.1): complete, chronological, pure, roles preserved.
+# Reporting calendar (v2.2.0): complete, chronological, pure, roles preserved.
 cal_path=archive/'calendario_prima_scelta.json'
 assert cal_path.is_file(),'calendar json missing'
 cal=json.loads(cal_path.read_text())
@@ -87,6 +90,7 @@ op_mids=[datetime.fromisoformat(r['mid_local']) for r in op]
 assert op_mids==sorted(op_mids),('operational calendar not chronological',)
 assert all(r['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and r['logistics_class']=='P1' for r in op)
 assert m['reporting']['operational_calendar_events']==len(op)
+assert m['reporting']['operational_scope']=='(PRIMA SCELTA or ALTERNATIVE) and P1 and transit_percent == 100'
 for f in ['0_CALENDARIO_OPERATIVO.html','0_CALENDARIO_OPERATIVO.csv']:
     assert (archive/f).is_file(),('missing',f)
 if any(t['name']=='KELT-16 b' for t in targets):

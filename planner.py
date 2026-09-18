@@ -251,6 +251,8 @@ def validate_profile(p):
                     ('maximum_uncertainty_minutes',0,1440)]:
         v=number(p.get(k))
         if v is None or not lo<=v<=hi: raise ValueError(f'Profilo: {k} deve essere fra {lo} e {hi}')
+    if p['transit_operational_percent']!=100 or p['first_choice_min_percent']!=100:
+        raise ValueError('Profilo: policy v2.2.0 richiede copertura transito esattamente 100%')
     if p['baseline_weak_percent']>p['baseline_good_percent']:
         raise ValueError('Profilo: baseline_weak_percent non può superare baseline_good_percent')
     if p['backup_fallback_separation_days']>p['backup_preferred_separation_days']:
@@ -284,7 +286,7 @@ def main(argv=None):
     out.mkdir(parents=True,exist_ok=False)
     archive=out/'9_ARCHIVIO_COMPLETO';raw=archive/'dati_originali';raw.mkdir(parents=True)
     manifest=dict(created_utc=created.isoformat(),generated_at=created.isoformat(),
-                  policy_version=p.get('policy_version','2.1'),start=str(start),end_exclusive=str(end),profile=p,
+                  policy_version=p.get('policy_version','2.2.0'),start=str(start),end_exclusive=str(end),profile=p,
                   command=shlex.join([str(ROOT/'uan-transits'),*(argv or sys.argv[1:])]),requested=args.names,
                   versions={x:importlib.metadata.version(x) for x in ['astropy','astropy-iers-data','numpy','reportlab']},
                   python=sys.version,status='running',filters={'max_v':args.max_v,'min_depth_ppt':args.min_depth})
@@ -350,7 +352,7 @@ def main(argv=None):
                 e=analyze(r,t,p,ground.get(round(float(r['jd_utc_exact']),7)))
                 events.append(e)
                 if (i+1)%25==0: log(f'  {t["name"]}: {i+1}/{len(candidates)}')
-        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.1)...')
+        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.2.0)...')
         selection=compute_selection(events,p)
         tmap={t['name']:t for t in targets}
         for tname,roles in selection.items():

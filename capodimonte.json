@@ -1,6 +1,6 @@
 {
   "name": "Capodimonte",
-  "policy_version": "2.1",
+  "policy_version": "2.2.0",
   "latitude": 40.862861,
   "longitude": 14.255056,
   "height_m": 150,
@@ -17,8 +17,8 @@
   "preferred_altitude_deg": 30,
   "excellent_altitude_deg": 40,
   "severe_altitude_deg": 15,
-  "transit_operational_percent": 90,
-  "first_choice_min_percent": 99.5,
+  "transit_operational_percent": 100,
+  "first_choice_min_percent": 100,
   "baseline_weak_percent": 50,
   "baseline_good_percent": 80,
   "maximum_uncertainty_minutes": 10,

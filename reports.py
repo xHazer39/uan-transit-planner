@@ -62,11 +62,12 @@ QUALITY_RANK={'PRIMA SCELTA':0,'ALTERNATIVE':1,'DA VALUTARE':2,'NON CONSIGLIATO'
 
 
 def compute_selection(events,p):
-    """Policy UAN v2.1: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
-    ordered by quality class then score, with temporal diversification of backups."""
+    """Policy UAN v2.2.0: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
+    restricted to exact-100% favorable events, ordered by quality class then score, with temporal diversification of backups."""
     by={}
     for e in events:
-        if e.get('logistics_class')=='P1' and e['category']!='NON CONSIGLIATO':
+        if (e.get('logistics_class')=='P1' and e.get('category') in ('PRIMA SCELTA','ALTERNATIVE')
+                and e.get('transit_percent',100)>=100):
             e['mid_ts']=datetime.fromisoformat(e['mid_utc']).timestamp()
             by.setdefault(e['name'],[]).append(e)
     selection={}
@@ -80,7 +81,7 @@ def compute_selection(events,p):
             if remaining:
                 # Quality dominates separation: best class first; within a class
                 # prefer >= preferred separation, then >= fallback, then next class.
-                for cat in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
+                for cat in ('PRIMA SCELTA','ALTERNATIVE'):
                     cls=[e for e in remaining if e['category']==cat]
                     if not cls: continue
                     for sep in (p['backup_preferred_separation_days'],p['backup_fallback_separation_days']):
@@ -183,7 +184,8 @@ def _prep_calendar(events,qualities,default_role):
     """Shared presentation-only row prep: P1 events of the given quality classes,
     chronological by mid_local. Never mutates input events."""
     rows=[dict(e) for e in events
-          if e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
+          if (e.get('logistics_class')=='P1' and e.get('quality_class') in qualities
+              and e.get('transit_percent',100)>=100)]
     for e in rows:
         e['display_role']=e.get('selection_role') or default_role
         e['event_id']=slug(e['name'])+'-c'+str(e['cycle'])
@@ -477,7 +479,7 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
            '<p>Timezone operativo del planner: <b>'+html.escape(tz)+'</b></p>'
            '<p>Ruoli: '+role_legend+'</p></div>')
     disclaimer=('<div class="disclaimer"><b>Gli eventi inclusi sono selezionati dal UAN Transit Planner '
-                'secondo policy UAN v2.1.1.</b><br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
+                'secondo policy UAN v2.2.0.</b><br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
                 'I dati e gli orari mostrati nelle tabelle TAPIR sottostanti sono quelli originali TAPIR '
                 'e possono essere espressi in UTC.<br/>TAPIR è utilizzato come formato di presentazione '
                 'dettagliato; classificazione, selezione e verifiche operative sono determinate dal planner.</div>')
@@ -518,7 +520,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     (archive/'target_esclusi.json').write_text(json.dumps(rejections,ensure_ascii=False,indent=2))
     counts=Counter(e['category'] for e in events)
     # Calendari semanticamente puri: 1=PRIMA SCELTA+P1, 2=ALTERNATIVE+P1; 3=review curata.
-    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1.
+    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1 e copertura 100%.
     tz=p['timezone']
     cal1=calendar_rows(events,'PRIMA SCELTA')
     cal2=calendar_rows(events,'ALTERNATIVE')
@@ -535,7 +537,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         'selection_roles_preserved':True,'extra_events_visible':True,
         'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA'),
         'operational_calendar_events':len(cal0),
-        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1',
+        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1 and transit_percent == 100',
         'dossiers':{'1_PRIMA_SCELTA':len(cal1),'2_ALTERNATIVE':len(cal2),'3_DA_VALUTARE':len(rev3)}}
     # Dossier 1/2/3: dettaglio nel formato TAPIR autentico (renderer downstream).
     role_std='PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · EXTRA = ulteriore occasione valida della stessa classe'
@@ -623,7 +625,7 @@ Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
 
 COME LEGGERE IL PACCHETTO
 Classificazione completa di tutti gli eventi nell'archivio; i PDF mostrano solo
-la selezione operativa per target (policy UAN v2.1).
+la selezione operativa per target (policy UAN v2.2.0; solo transiti al 100% ricevono PRIMARY/BACKUP).
 1_PRIMA_SCELTA.pdf: per ogni target con almeno una PRIMA SCELTA operativa:
 PRIMARY + BACKUP1 + BACKUP2 come tabelle TAPIR originali.
 2_ALTERNATIVE.pdf: target il cui miglior evento operativo e' ALTERNATIVE: selezione per target.
@@ -709,17 +711,17 @@ Le quote min/max sono campionate, con ingresso/centro/uscita sempre inclusi.
 Rifrazione disattivata, orizzonte piano; ostacoli locali non modellati.
 La copertura è durata dell'intersezione / durata del transito. Non si tronca un 915%:
 si conserva il dato TAPIR e si usa il nuovo calcolo. Scarti >2 punti percentuali sono segnalati.
-Eleggibilita' PRIMA SCELTA: copertura >= {p['first_choice_min_percent']:.1f}% (policy v2.1).
+Copertura favorevole: PRIMA SCELTA e ALTERNATIVE richiedono il 100% esatto del transito osservabile; nessun quasi-100 viene promosso.
 Luna: metriche al centro, minimo della distanza campionato ogni <=10 minuti;
 livelli di rischio BASSA/MODERATA/ALTA/ESTREMA (dettagli nella sezione POLICY).
 
-POLICY UAN TRANSIT PLANNER v2.1 (gerarchia rigida; uno score alto non compensa livelli superiori)
+POLICY UAN TRANSIT PLANNER v2.2.0 (gerarchia rigida; uno score alto non compensa livelli superiori)
 1. Integrita' temporale: TTV, residuo BJD > {p['timing_residual_limit_seconds']:.0f} s o errore centro > {p['maximum_uncertainty_minutes']:.0f} min -> DA VALUTARE.
 2. Geometria del target dal sito: quota teorica < {p['severe_altitude_deg']}° -> NON CONSIGLIATO DAL SITO
    ({p['severe_altitude_deg']}-{p['visibility_altitude_deg']}° MOLTO DIFFICILE, {p['visibility_altitude_deg']}-{p['preferred_altitude_deg']}° MARGINALE,
    {p['preferred_altitude_deg']}-{p['excellent_altitude_deg']}° BUONO, >= {p['excellent_altitude_deg']}° MOLTO FAVOREVOLE).
 3. Copertura transito (ricalcolata indipendentemente, mai la percentuale TAPIR alla cieca):
-   < {p['transit_operational_percent']:.0f}% -> DA VALUTARE; {p['transit_operational_percent']:.0f}-{p['first_choice_min_percent']:.1f}% -> max ALTERNATIVE; >= {p['first_choice_min_percent']:.1f}% -> eleggibile PRIMA SCELTA.
+   solo 100% esatto -> eleggibile PRIMA SCELTA/ALTERNATIVE; qualsiasi valore inferiore -> DA VALUTARE.
 4. Baseline per lato (denominatore = finestra richiesta, 1 h + 1 sigma): < {p['baseline_weak_percent']:.0f}% su un lato -> DA VALUTARE;
    {p['baseline_weak_percent']:.0f}-{p['baseline_good_percent']:.0f}% -> max ALTERNATIVE; >= {p['baseline_good_percent']:.0f}% entrambi -> eleggibile PRIMA SCELTA.
 5. Quota evento (assoluta, mai relativa al massimo del target): centro < {p['preferred_altitude_deg']}° -> DA VALUTARE;
