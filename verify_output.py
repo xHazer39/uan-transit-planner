@@ -50,6 +50,8 @@ for e in events:
 for name,es in byt.items():
     for e in es:
         assert e['logistics_class']=='P1',('selected not P1',name,e['mid_utc'])
+        assert e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE'),('selected review-only event',name,e['mid_utc'])
+        assert e['transit_percent']>=100,('selected partial transit',name,e['mid_utc'],e['transit_percent'])
         assert e['selection_role'] in ('PRIMARY','BACKUP1','BACKUP2')
     for e in es[1:]:
         gap=abs(e['mid_ts']-es[0]['mid_ts'])
