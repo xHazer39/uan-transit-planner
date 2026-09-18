@@ -157,8 +157,7 @@ def classify(e,p):
         codes.append('UNCERTAINTY_HIGH')
         return 'DA VALUTARE','Incertezza temporale elevata',codes
     baseline=min(e['baseline_before_percent'],e['baseline_after_percent'])
-    coverage_tol=p.get('full_transit_tolerance_percentage_points',1e-6)
-    if e['transit_percent'] < p['transit_operational_percent']-coverage_tol:
+    if e['transit_percent'] < p['transit_operational_percent']:
         codes.append('TRANSIT_COVERAGE_LOW')
         return 'DA VALUTARE',f'Copertura transito non completa: {e["transit_percent"]:.6f}% osservabile; richiesto {p["transit_operational_percent"]:.0f}%',codes
     if baseline < p['baseline_weak_percent']:
@@ -171,7 +170,7 @@ def classify(e,p):
         codes.append('MOON_EXTREME')
         return 'DA VALUTARE',f'Luna ESTREMA: {e["moon_illumination_percent"]:.0f}% a {e["moon_separation_deg"]:.1f}° (sopra orizzonte)',codes
     issues=[]
-    if e['transit_percent'] < p['first_choice_min_percent']-coverage_tol:
+    if e['transit_percent'] < p['first_choice_min_percent']:
         codes.append('TRANSIT_PARTIAL')
         issues.append(f'transito {e["transit_percent"]:.1f}% (sotto {p["first_choice_min_percent"]:.1f}%)')
     if baseline < p['baseline_good_percent']:
