@@ -169,7 +169,7 @@ class SelectionChecks(unittest.TestCase):
     def ev(self,cycle,days,score,cat='PRIMA SCELTA'):
         mid=self.base+self.timedelta(days=days)
         return dict(name='X b',mid_utc=mid.isoformat(),mid_local=mid.isoformat(),category=cat,
-                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1')
+                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1',transit_percent=100)
     def roles(self,events):
         sel=self.compute_selection(events,self.p)['X b']
         return [(r,e['cycle'],e['category']) for r,e in sel]
@@ -216,6 +216,11 @@ class SelectionChecks(unittest.TestCase):
         # Best class wins over score: a DA VALUTARE night never becomes PRIMARY.
         mixed=[ev(10,0,99.0,'DA VALUTARE'),ev(11,9,50.0,'ALTERNATIVE')]
         self.assertEqual(compute_selection(mixed,p)['X b'][0][1]['cycle'],11)
+        # Even a stale favorable label is not enough: recommendations still require exact 100% coverage.
+        stale=[dict(ev(12,0,99.0,'ALTERNATIVE'),transit_percent=99.999)]
+        self.assertNotIn('X b',compute_selection(stale,p))
+        # A target with only DA VALUTARE events receives no PRIMARY/BACKUP recommendation.
+        self.assertNotIn('X b',compute_selection([ev(13,0,99.0,'DA VALUTARE')],p))
         # Non-P1 events are excluded from the operational pool.
         self.assertNotIn('Y b',compute_selection([dict(ev(20,0,99.0),name='Y b',logistics_class='P3')],p))
 
