@@ -244,13 +244,16 @@ def validate_profile(p):
                     ('twilight_deg',-30,-1),('visibility_altitude_deg',0,89),('baseline_hours',0.5,24),
                     ('sampling_seconds',10,300),('preferred_altitude_deg',0,90),('severe_altitude_deg',0,90),
                     ('excellent_altitude_deg',0,90),('transit_operational_percent',50,100),
-                    ('first_choice_min_percent',50,100),('baseline_weak_percent',0,100),
+                    ('first_choice_min_percent',50,100),('full_transit_tolerance_percentage_points',0,0.001),
+                    ('baseline_weak_percent',0,100),
                     ('baseline_good_percent',0,100),('timing_residual_limit_seconds',0.1,60),
                     ('backup_preferred_separation_days',0,60),('backup_fallback_separation_days',0,60),
                     ('max_review_events_per_target',1,50),
                     ('maximum_uncertainty_minutes',0,1440)]:
         v=number(p.get(k))
         if v is None or not lo<=v<=hi: raise ValueError(f'Profilo: {k} deve essere fra {lo} e {hi}')
+    if p['transit_operational_percent']>p['first_choice_min_percent']:
+        raise ValueError('Profilo: transit_operational_percent non può superare first_choice_min_percent')
     if p['baseline_weak_percent']>p['baseline_good_percent']:
         raise ValueError('Profilo: baseline_weak_percent non può superare baseline_good_percent')
     if p['backup_fallback_separation_days']>p['backup_preferred_separation_days']:
@@ -284,7 +287,7 @@ def main(argv=None):
     out.mkdir(parents=True,exist_ok=False)
     archive=out/'9_ARCHIVIO_COMPLETO';raw=archive/'dati_originali';raw.mkdir(parents=True)
     manifest=dict(created_utc=created.isoformat(),generated_at=created.isoformat(),
-                  policy_version=p.get('policy_version','2.1'),start=str(start),end_exclusive=str(end),profile=p,
+                  policy_version=p.get('policy_version','2.2.0'),start=str(start),end_exclusive=str(end),profile=p,
                   command=shlex.join([str(ROOT/'uan-transits'),*(argv or sys.argv[1:])]),requested=args.names,
                   versions={x:importlib.metadata.version(x) for x in ['astropy','astropy-iers-data','numpy','reportlab']},
                   python=sys.version,status='running',filters={'max_v':args.max_v,'min_depth_ppt':args.min_depth})
