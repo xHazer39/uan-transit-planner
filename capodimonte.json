@@ -19,7 +19,6 @@
   "severe_altitude_deg": 15,
   "transit_operational_percent": 100,
   "first_choice_min_percent": 100,
-  "full_transit_tolerance_percentage_points": 0.000001,
   "baseline_weak_percent": 50,
   "baseline_good_percent": 80,
   "maximum_uncertainty_minutes": 10,
