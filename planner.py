@@ -251,8 +251,8 @@ def validate_profile(p):
                     ('maximum_uncertainty_minutes',0,1440)]:
         v=number(p.get(k))
         if v is None or not lo<=v<=hi: raise ValueError(f'Profilo: {k} deve essere fra {lo} e {hi}')
-    if p['transit_operational_percent']>p['first_choice_min_percent']:
-        raise ValueError('Profilo: transit_operational_percent non può superare first_choice_min_percent')
+    if p['transit_operational_percent']!=100 or p['first_choice_min_percent']!=100:
+        raise ValueError('Profilo: policy v2.2.0 richiede copertura transito esattamente 100%')
     if p['baseline_weak_percent']>p['baseline_good_percent']:
         raise ValueError('Profilo: baseline_weak_percent non può superare baseline_good_percent')
     if p['backup_fallback_separation_days']>p['backup_preferred_separation_days']:
