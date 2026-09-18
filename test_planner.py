@@ -49,7 +49,7 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(classify(dict(e,moon_risk='ALTA'),p)[0],'ALTERNATIVE')
         self.assertEqual(classify(dict(e,moon_risk='ESTREMA'),p)[0],'DA VALUTARE')
         self.assertIn('MOON_EXTREME',classify(dict(e,moon_risk='ESTREMA'),p)[2])
-        # Moon risk: the audit v2.1 examples.
+        # Moon risk: the audit v2.2.0 examples.
         self.assertEqual(moon_risk(3,111,True),'BASSA')
         self.assertEqual(moon_risk(90,120,True),'BASSA')
         self.assertEqual(moon_risk(97,54,True),'ALTA')
@@ -73,7 +73,7 @@ class PlannerChecks(unittest.TestCase):
         self.assertEqual(geometry_label(35,p),'BUONO')
         self.assertEqual(geometry_label(55,p),'MOLTO FAVOREVOLE')
 
-    def test_v21_classification_boundaries(self):
+    def test_v220_classification_boundaries(self):
         p={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
            'visibility_altitude_deg':20,'transit_operational_percent':100,'first_choice_min_percent':100,
            'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
@@ -483,7 +483,7 @@ class PrototypeChecks(unittest.TestCase):
         rows=self.rows(events)
         doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
         self.assertIsNone(broken)
-        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.1.1',
+        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.2.0',
                        'MARKER_TAPIR_ROW','WASP-77 A b','Europe/Rome','PRIMARY','BACKUP1','EXTRA']:
             self.assertIn(marker,doc)
         self.assertEqual(doc.count('MARKER_TAPIR_ROW'),len(rows))
