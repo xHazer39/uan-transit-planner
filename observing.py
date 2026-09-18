@@ -87,7 +87,7 @@ def nautical_start(evening,latitude,longitude,height,zone_name,twilight):
 
 
 def geometry_label(max_alt,p):
-    """Policy UAN v2.1, phase 2: structural geometry of the target from this site."""
+    """Policy UAN v2.2.0, phase 2: structural geometry of the target from this site."""
     if max_alt < p['severe_altitude_deg']: return 'NON CONSIGLIATO DAL SITO'
     if max_alt < p['visibility_altitude_deg']: return 'MOLTO DIFFICILE'
     if max_alt < p['preferred_altitude_deg']: return 'MARGINALE'
@@ -95,7 +95,7 @@ def geometry_label(max_alt,p):
     return 'MOLTO FAVOREVOLE'
 
 
-# Policy UAN v2.1, phase 7: lunar risk levels (illumination %, separation deg).
+# Policy UAN v2.2.0, phase 7: lunar risk levels (illumination %, separation deg).
 # ESTREMA/ALTA use strict separation (<); MODERATA uses inclusive (<=).
 MOON_RULES=(('ESTREMA',((90,40),(70,20),(40,10)),False),
             ('ALTA',((80,60),(50,40),(20,20)),False),
@@ -114,7 +114,7 @@ def moon_risk(illum,sep,up):
 
 
 def score(e,p):
-    """Secondary 0-1 ordering score (policy UAN v2.1). Never overrides the class.
+    """Secondary 0-1 ordering score (policy UAN v2.2.0). Never overrides the class.
     Magnitude and depth are deliberately excluded until a real instrument profile exists."""
     up=e.get('moon_up_during_observable',e.get('moon_up_during_transit',False))
     if not up or e['moon_illumination_percent'] is None or e['moon_separation_deg'] is None:
@@ -134,7 +134,7 @@ def score(e,p):
 
 
 def classify(e,p):
-    """Policy UAN v2.1 hierarchy. Returns (quality_class, human reason, reason_codes)."""
+    """Policy UAN v2.2.0 hierarchy. Returns (quality_class, human reason, reason_codes)."""
     codes=[]
     if e['max_altitude_theoretical_deg'] < p['severe_altitude_deg']:
         codes.append('TARGET_GEOMETRY_NOT_RECOMMENDED')
