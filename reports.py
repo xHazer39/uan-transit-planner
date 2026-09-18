@@ -63,10 +63,11 @@ QUALITY_RANK={'PRIMA SCELTA':0,'ALTERNATIVE':1,'DA VALUTARE':2,'NON CONSIGLIATO'
 
 def compute_selection(events,p):
     """Policy UAN v2.2.0: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
-    ordered by quality class then score, with temporal diversification of backups."""
+    restricted to exact-100% favorable events, ordered by quality class then score, with temporal diversification of backups."""
     by={}
     for e in events:
-        if e.get('logistics_class')=='P1' and e['category']!='NON CONSIGLIATO':
+        if (e.get('logistics_class')=='P1' and e.get('category') in ('PRIMA SCELTA','ALTERNATIVE')
+                and e.get('transit_percent',100)>=100):
             e['mid_ts']=datetime.fromisoformat(e['mid_utc']).timestamp()
             by.setdefault(e['name'],[]).append(e)
     selection={}
@@ -183,7 +184,8 @@ def _prep_calendar(events,qualities,default_role):
     """Shared presentation-only row prep: P1 events of the given quality classes,
     chronological by mid_local. Never mutates input events."""
     rows=[dict(e) for e in events
-          if e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
+          if (e.get('logistics_class')=='P1' and e.get('quality_class') in qualities
+              and e.get('transit_percent',100)>=100)]
     for e in rows:
         e['display_role']=e.get('selection_role') or default_role
         e['event_id']=slug(e['name'])+'-c'+str(e['cycle'])
