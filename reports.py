@@ -81,7 +81,7 @@ def compute_selection(events,p):
             if remaining:
                 # Quality dominates separation: best class first; within a class
                 # prefer >= preferred separation, then >= fallback, then next class.
-                for cat in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
+                for cat in ('PRIMA SCELTA','ALTERNATIVE'):
                     cls=[e for e in remaining if e['category']==cat]
                     if not cls: continue
                     for sep in (p['backup_preferred_separation_days'],p['backup_fallback_separation_days']):
