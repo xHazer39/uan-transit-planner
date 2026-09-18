@@ -625,7 +625,7 @@ Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
 
 COME LEGGERE IL PACCHETTO
 Classificazione completa di tutti gli eventi nell'archivio; i PDF mostrano solo
-la selezione operativa per target (policy UAN v2.2).
+la selezione operativa per target (policy UAN v2.2.0; solo transiti al 100% ricevono PRIMARY/BACKUP).
 1_PRIMA_SCELTA.pdf: per ogni target con almeno una PRIMA SCELTA operativa:
 PRIMARY + BACKUP1 + BACKUP2 come tabelle TAPIR originali.
 2_ALTERNATIVE.pdf: target il cui miglior evento operativo e' ALTERNATIVE: selezione per target.
