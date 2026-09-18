@@ -352,7 +352,7 @@ def main(argv=None):
                 e=analyze(r,t,p,ground.get(round(float(r['jd_utc_exact']),7)))
                 events.append(e)
                 if (i+1)%25==0: log(f'  {t["name"]}: {i+1}/{len(candidates)}')
-        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.1)...')
+        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.2.0)...')
         selection=compute_selection(events,p)
         tmap={t['name']:t for t in targets}
         for tname,roles in selection.items():
