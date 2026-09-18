@@ -62,7 +62,7 @@ QUALITY_RANK={'PRIMA SCELTA':0,'ALTERNATIVE':1,'DA VALUTARE':2,'NON CONSIGLIATO'
 
 
 def compute_selection(events,p):
-    """Policy UAN v2.1: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
+    """Policy UAN v2.2.0: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
     ordered by quality class then score, with temporal diversification of backups."""
     by={}
     for e in events:
