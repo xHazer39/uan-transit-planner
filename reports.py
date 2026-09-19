@@ -17,7 +17,8 @@ from astropy.coordinates import SkyCoord,EarthLocation
 import astropy.units as u
 from astropy.time import Time
 
-CATEGORIES=['PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO']
+CATEGORIES=['PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO','NON ELEGGIBILE']
+OPERATIONAL_CLASSES=('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO')
 BASE='https://astro.swarthmore.edu/transits/'
 
 
@@ -63,10 +64,11 @@ QUALITY_RANK={'PRIMA SCELTA':0,'ALTERNATIVE':1,'DA VALUTARE':2,'NON CONSIGLIATO'
 
 def compute_selection(events,p):
     """Policy UAN v2.1: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
-    ordered by quality class then score, with temporal diversification of backups."""
+    ordered by quality class then score, with temporal diversification of backups.
+    Policy v2.2: only eligible (full-transit) events can ever hold a role."""
     by={}
     for e in events:
-        if e.get('logistics_class')=='P1' and e['category']!='NON CONSIGLIATO':
+        if e.get('eligible',True) and e.get('logistics_class')=='P1' and e['category'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
             e['mid_ts']=datetime.fromisoformat(e['mid_utc']).timestamp()
             by.setdefault(e['name'],[]).append(e)
     selection={}
@@ -183,7 +185,7 @@ def _prep_calendar(events,qualities,default_role):
     """Shared presentation-only row prep: P1 events of the given quality classes,
     chronological by mid_local. Never mutates input events."""
     rows=[dict(e) for e in events
-          if e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
+          if e.get('eligible',True) and e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
     for e in rows:
         e['display_role']=e.get('selection_role') or default_role
         e['event_id']=slug(e['name'])+'-c'+str(e['cycle'])
@@ -327,7 +329,7 @@ def curated_review_rows(events,p):
     """DA VALUTARE: per target the best P1 events (max configured), then chronological."""
     by={}
     for e in events:
-        if e.get('quality_class')=='DA VALUTARE' and e.get('logistics_class')=='P1':
+        if e.get('eligible',True) and e.get('quality_class')=='DA VALUTARE' and e.get('logistics_class')=='P1':
             by.setdefault(e['name'],[]).append(e)
     picked=[]
     for name,group in by.items():
@@ -477,7 +479,7 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
            '<p>Timezone operativo del planner: <b>'+html.escape(tz)+'</b></p>'
            '<p>Ruoli: '+role_legend+'</p></div>')
     disclaimer=('<div class="disclaimer"><b>Gli eventi inclusi sono selezionati dal UAN Transit Planner '
-                'secondo policy UAN v2.1.1.</b><br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
+                'secondo policy UAN v2.2.0 (solo transiti coperti al 100%, ricalcolo indipendente).</b><br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
                 'I dati e gli orari mostrati nelle tabelle TAPIR sottostanti sono quelli originali TAPIR '
                 'e possono essere espressi in UTC.<br/>TAPIR è utilizzato come formato di presentazione '
                 'dettagliato; classificazione, selezione e verifiche operative sono determinate dal planner.</div>')
@@ -526,6 +528,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     rev3=curated_review_rows(events,p)
     # 0_CALENDARIO_OPERATIVO: dashboard sintetica del planner (invariata).
     (archive/'0_CALENDARIO_OPERATIVO.html').write_text(calendar_document(cal0,'CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',tz,target_map,p),encoding='utf-8')
+    write_calendar_files(archive,cal1)
     write_calendar_files(archive,cal0,'0_CALENDARIO_OPERATIVO')
     write_google_calendar(archive,cal1)
     if not calendar_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0,tz,target_map,p):
@@ -579,7 +582,8 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         extra_dates=[datetime.fromisoformat(e['mid_local']).strftime('%d/%m/%Y') for e in p1_all if not e.get('selection_role')]
         target_summaries.append(dict(name=name,max_altitude_theoretical_deg=hmax,
             geometry_class=geometry_label(hmax,p),events=len(group),
-            p1_candidates=sum(e.get('logistics_class')=='P1' and e['category']!='NON CONSIGLIATO' for e in group),
+            eligible_events=sum(bool(e.get('eligible')) for e in group),
+            p1_candidates=sum(e.get('eligible',True) and e.get('logistics_class')=='P1' and e['category'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE') for e in group),
             first_choice_p1_count=len(p1_all),extra_first_choice_p1_count=len(extra_dates),
             extra_first_choice_dates=', '.join(extra_dates),
             best_astronomical_class=CATEGORIES[best] if best is not None else 'NESSUN EVENTO NEL PERIODO',
@@ -604,13 +608,14 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     (archive/'riepilogo_target.json').write_text(json.dumps(target_summaries,indent=2,ensure_ascii=False))
     with (archive/'riepilogo_target.csv').open('w',newline='',encoding='utf-8') as f:
         w=csv.DictWriter(f,fieldnames=['name','max_altitude_theoretical_deg','geometry_class','events',
-                                       'p1_candidates','first_choice_p1_count','extra_first_choice_p1_count',
+                                       'eligible_events','p1_candidates','first_choice_p1_count','extra_first_choice_p1_count',
                                        'extra_first_choice_dates','best_astronomical_class','primary','backup1','backup2'])
         w.writeheader();w.writerows(target_summaries)
     (archive/'index.html').write_text('<!doctype html><html lang="it"><meta charset="utf-8"><title>Archivio UAN</title>'+style+
                                      '<h1>Archivio completo</h1><ul>'+''.join(index)+'</ul><h2>Target esclusi</h2><pre>'+html.escape(json.dumps(rejections,indent=2,ensure_ascii=False))+'</pre></html>')
     selection_counts=Counter(e['category'] for roles in selection.values() for _,e in roles)
     summary='\n'.join(f'{c}: {counts[c]} totali; {selection_counts.get(c,0)} selezionati come PRIMARY/BACKUP' for c in CATEGORIES)
+    summary+=f'\nEleggibili (transito 100% ricalcolato): {sum(bool(e.get("eligible")) for e in events)}; esclusi TRANSIT_NOT_100: {sum(e.get("exclusion_reason")=="TRANSIT_NOT_100" for e in events)} (solo archivio)'
     logistics_counts=Counter(e.get('logistics_class','P3?') for e in events)
     log_summary='; '.join(f'{k}: {logistics_counts.get(k,0)}' for k in ('P1','P2','P3'))
     target_text='\n'.join(f'{t["name"]}: geometria {t["geometry_class"]} (quota teorica {t["max_altitude_theoretical_deg"]:.1f}°); '
@@ -623,7 +628,12 @@ Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
 
 COME LEGGERE IL PACCHETTO
 Classificazione completa di tutti gli eventi nell'archivio; i PDF mostrano solo
-la selezione operativa per target (policy UAN v2.1).
+la selezione operativa per target (policy UAN v2.2).
+GATE DI ELEGGIBILITA' (v2.2): solo i transiti coperti al 100% dal ricalcolo indipendente
+(durata non coperta <= 0.001 s) entrano nella classificazione, nella logistica, nello score,
+nei ruoli PRIMARY/BACKUP/EXTRA e nei report 0/1/2/3. Gli altri restano SOLO nell'archivio
+(risultati.csv/json) con eligible=false, exclusion_reason=TRANSIT_NOT_100, categoria NON ELEGGIBILE.
+DA VALUTARE significa: transito completo al 100% ma con un altro problema da valutare.
 1_PRIMA_SCELTA.pdf: per ogni target con almeno una PRIMA SCELTA operativa:
 PRIMARY + BACKUP1 + BACKUP2 come tabelle TAPIR originali.
 2_ALTERNATIVE.pdf: target il cui miglior evento operativo e' ALTERNATIVE: selezione per target.
@@ -713,12 +723,18 @@ Eleggibilita' PRIMA SCELTA: copertura >= {p['first_choice_min_percent']:.1f}% (p
 Luna: metriche al centro, minimo della distanza campionato ogni <=10 minuti;
 livelli di rischio BASSA/MODERATA/ALTA/ESTREMA (dettagli nella sezione POLICY).
 
-POLICY UAN TRANSIT PLANNER v2.1 (gerarchia rigida; uno score alto non compensa livelli superiori)
+POLICY UAN TRANSIT PLANNER v2.2 (gerarchia rigida; uno score alto non compensa livelli superiori)
+0. Eleggibilita': solo transiti con copertura 100% reale (ricalcolo Astropy, durata non coperta <= 0.001 s).
+   Gli altri eventi restano enumerati e misurati nell'archivio ma non ricevono classe, logistica,
+   score o ruolo (eligible=false, exclusion_reason=TRANSIT_NOT_100).
 1. Integrita' temporale: TTV, residuo BJD > {p['timing_residual_limit_seconds']:.0f} s o errore centro > {p['maximum_uncertainty_minutes']:.0f} min -> DA VALUTARE.
 2. Geometria del target dal sito: quota teorica < {p['severe_altitude_deg']}° -> NON CONSIGLIATO DAL SITO
    ({p['severe_altitude_deg']}-{p['visibility_altitude_deg']}° MOLTO DIFFICILE, {p['visibility_altitude_deg']}-{p['preferred_altitude_deg']}° MARGINALE,
    {p['preferred_altitude_deg']}-{p['excellent_altitude_deg']}° BUONO, >= {p['excellent_altitude_deg']}° MOLTO FAVOREVOLE).
 3. Copertura transito (ricalcolata indipendentemente, mai la percentuale TAPIR alla cieca):
+   GATE v2.2 a monte di tutto: durata non coperta > 0.001 s (tolleranza numerica, nessun arrotondamento,
+   nessuna soglia percentuale) -> NON ELEGGIBILE, solo archivio (eligible=false, TRANSIT_NOT_100).
+   Le soglie storiche restano nel codice ma vengono raggiunte solo da transiti coperti al 100%:
    < {p['transit_operational_percent']:.0f}% -> DA VALUTARE; {p['transit_operational_percent']:.0f}-{p['first_choice_min_percent']:.1f}% -> max ALTERNATIVE; >= {p['first_choice_min_percent']:.1f}% -> eleggibile PRIMA SCELTA.
 4. Baseline per lato (denominatore = finestra richiesta, 1 h + 1 sigma): < {p['baseline_weak_percent']:.0f}% su un lato -> DA VALUTARE;
    {p['baseline_weak_percent']:.0f}-{p['baseline_good_percent']:.0f}% -> max ALTERNATIVE; >= {p['baseline_good_percent']:.0f}% entrambi -> eleggibile PRIMA SCELTA.

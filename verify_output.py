@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import astropy.units as u
 from astropy.coordinates import SkyCoord,EarthLocation
 from astropy.time import Time
-from observing import analyze,coverage
+from observing import analyze,coverage,FULL_TRANSIT_TOLERANCE_SECONDS as TOL
 from planner import read_csv
 from reports import compute_selection,slug,curated_review_rows
 import re
@@ -42,10 +42,30 @@ for e in events:
         assert e['altitude_min_deg']>=p['preferred_altitude_deg']-0.05
         assert min(e['baseline_before_percent'],e['baseline_after_percent'])>=p['baseline_good_percent']-0.05
         assert e['moon_risk']=='BASSA',('moon',e['name'],e['mid_utc'],e['moon_risk'])
+# Policy v2.2 eligibility gate: only real 100% transits (independent recomputation) may be
+# classified, scheduled, scored or selected; everything else stays archive-only with a reason.
+OPER={'PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO'}
+for e in events:
+    assert 'eligible' in e and 'exclusion_reason' in e and 'transit_uncovered_seconds' in e,('gate fields',e['name'],e['cycle'])
+    assert e['transit_uncovered_seconds']>=0
+    assert e['full_transit']==(e['transit_uncovered_seconds']<=TOL)==e['eligible'],('gate drift',e['name'],e['cycle'])
+    if e['eligible']:
+        assert e['exclusion_reason'] is None and e['quality_class'] in OPER and e['category']==e['quality_class']
+        assert e['logistics_class'] in ('P1','P2','P3') and e['score'] is not None
+        assert 'TRANSIT_NOT_100' not in e['reason_codes']
+    else:
+        assert e['exclusion_reason']=='TRANSIT_NOT_100' and e['category']=='NON ELEGGIBILE'
+        assert e['quality_class'] is None and e['logistics_class'] is None and e['score'] is None
+        assert not e.get('selection_role') and e['transit_percent']<100,('excluded event with role or 100%',e['name'],e['cycle'])
+n_elig=sum(e['eligible'] for e in events);n_excl=sum(not e['eligible'] for e in events)
+assert n_elig+n_excl==len(events)==m['event_count'],'archive must keep every enumerated cycle'
+assert all(e['transit_percent']==100.0 or e['transit_uncovered_seconds']>0 for e in events)
 # Policy v2.1 selection: roles must be operational (P1) and temporally diversified.
 byt={}
 for e in events:
-    if e.get('selection_role'): byt.setdefault(e['name'],[]).append(e)
+    if e.get('selection_role'):
+        assert e['eligible'] and e['full_transit'],('role on non-eligible',e['name'],e['cycle'])
+        byt.setdefault(e['name'],[]).append(e)
 for name,es in byt.items():
     for e in es:
         assert e['logistics_class']=='P1',('selected not P1',name,e['mid_utc'])
@@ -160,11 +180,35 @@ for e in [e for e in events if 1<e['transit_percent']<99][:3]:
     convergence.append({'target':e['name'],'mid_utc':e['mid_utc'],'coverage_difference_percentage_points':delta})
 # Concrete historic interval: 20:33--23:03, visible from 21:55; 68/150 = 45.333%.
 assert abs(coverage(0,150,[(82,211)])-45.3333333333)<1e-8
+# Every operational output row (calendars 0/1, dossiers 1/2/3, roles) is eligible & full transit;
+# no TRANSIT_NOT_100 leaks into any operational artifact; excluded events stay in the archive.
+by_id={slug(e['name'])+'-c'+str(e['cycle']):e for e in events}
+oper_ids=set(cal_ids)|set(op_ids)|{i[len('event-'):] for s_ in exp_d.values() for i in s_}
+low={k.lower():e for k,e in by_id.items()}
+for ident in oper_ids:
+    e=low.get(ident.lower())
+    assert e is not None,('operational row unknown',ident)
+    assert e['eligible'] and e['full_transit'] and e['transit_uncovered_seconds']<=TOL,('operational row not full transit',ident)
+for f in ['0_CALENDARIO_OPERATIVO.json','0_CALENDARIO_OPERATIVO.csv','calendario_prima_scelta.json','calendario_prima_scelta.csv','1_PRIMA_SCELTA.ics','1_PRIMA_SCELTA.google_calendar.csv']:
+    assert 'TRANSIT_NOT_100' not in (archive/f).read_text(),('exclusion leaked into',f)
+for base in exp_d:
+    assert 'TRANSIT_NOT_100' not in (out/(base+'.html')).read_text(),('exclusion leaked into',base)
+for r in cal+op:
+    assert by_id[r['event_id']]['eligible'],('calendar row not eligible',r['event_id'])
+excluded={k for k,e in by_id.items() if not e['eligible']}
+csv_ids={slug(r['name'])+'-c'+r['cycle'] for r in __import__('csv').DictReader((archive/'risultati.csv').open(encoding='utf-8'))}
+assert excluded<=csv_ids and excluded<=set(by_id),('excluded events missing from archive',)
+assert not ({k.lower() for k in excluded}&{i.lower() for i in oper_ids}),('excluded event in operational output',)
+# DA VALUTARE semantics v2.2: full transit with another issue, never partial coverage.
+for e in events:
+    if e['quality_class']=='DA VALUTARE':
+        assert e['full_transit'] and 'TRANSIT_COVERAGE_LOW' not in e['reason_codes'],('DA VALUTARE partial',e['name'],e['cycle'])
 z=out.with_suffix('.zip')
 with zipfile.ZipFile(z) as f:
     assert f.testzip() is None
     for name in ['0_LEGGIMI.txt','1_PRIMA_SCELTA.pdf','2_ALTERNATIVE.pdf','3_DA_VALUTARE.pdf']:
         assert out.name+'/'+name in f.namelist()
 print(json.dumps({'status':'PASS','events':len(events),'targets':len(targets),'complete_orbit_enumeration':True,
+                  'eligible_full_transit':n_elig,'excluded_transit_not_100':n_excl,
                   'hashes_and_zip':True,'max_timing_residual_seconds':m['max_timing_residual_seconds'],
                   'convergence_120s_vs_30s':convergence},indent=2))

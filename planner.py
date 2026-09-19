@@ -22,7 +22,7 @@ from urllib.request import urlopen,Request
 from zoneinfo import ZoneInfo
 from astropy.time import Time
 from observing import number,analyze
-from reports import slug,write_reports,BASE,compute_selection,run_perl
+from reports import slug,write_reports,BASE,compute_selection,run_perl,tapir_event_html
 
 ROOT=Path(__file__).resolve().parent
 NASA='https://exoplanetarchive.ipac.caltech.edu/'
@@ -286,7 +286,7 @@ def main(argv=None):
     manifest=dict(created_utc=created.isoformat(),generated_at=created.isoformat(),
                   policy_version=p.get('policy_version','2.1'),start=str(start),end_exclusive=str(end),profile=p,
                   command=shlex.join([str(ROOT/'uan-transits'),*(argv or sys.argv[1:])]),requested=args.names,
-                  versions={x:importlib.metadata.version(x) for x in ['astropy','astropy-iers-data','numpy','reportlab']},
+                  versions={x:importlib.metadata.version(x) for x in ['astropy','astropy-iers-data','numpy']},
                   python=sys.version,status='running',filters={'max_v':args.max_v,'min_depth_ppt':args.min_depth})
     try:
         manifest['git_commit']=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip()
@@ -350,7 +350,7 @@ def main(argv=None):
                 e=analyze(r,t,p,ground.get(round(float(r['jd_utc_exact']),7)))
                 events.append(e)
                 if (i+1)%25==0: log(f'  {t["name"]}: {i+1}/{len(candidates)}')
-        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.1)...')
+        log('Selezione PRIMARY/BACKUP1/BACKUP2 per target (policy v2.2)...')
         selection=compute_selection(events,p)
         tmap={t['name']:t for t in targets}
         for tname,roles in selection.items():
@@ -364,7 +364,7 @@ def main(argv=None):
         log('Generazione PDF, HTML e archivio...')
         manifest['counts'],manifest['selection_counts']=write_reports(out,events,targets,rejected,manifest,selection)
         from collections import Counter
-        manifest['logistics_counts']=dict(Counter(e.get('logistics_class') for e in events))
+        manifest['logistics_counts']=dict(Counter(e['logistics_class'] for e in events if e['logistics_class']))
         manifest['event_count']=len(events);manifest['excluded_targets']=rejected
         manifest['anomalies']=sum(e['tapir_anomaly'] for e in events)
         manifest['max_timing_residual_seconds']=max((abs(e['timing_residual_seconds']) for e in events),default=None)

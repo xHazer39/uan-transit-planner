@@ -44,6 +44,20 @@ def coverage(a,b,windows):
     return 100*overlap(a,b,windows)/(b-a)
 
 
+# Policy v2.2 eligibility: a transit is "full" only when the independently recomputed
+# uncovered duration is zero. Tolerance 1e-3 s covers float noise on unix-second
+# arithmetic (~1e-6 s at 1.7e9) and is far below the 120 s grid / linear-crossing
+# resolution: no rounding, no percentage threshold, no TAPIR value involved.
+FULL_TRANSIT_TOLERANCE_SECONDS=1e-3
+
+
+def uncovered_seconds(a,b,windows):
+    """Transit duration outside the observable windows, in seconds (>= 0)."""
+    if b <= a:
+        raise ValueError('Intervallo non positivo')
+    return max(0.0,(b-a)-overlap(a,b,windows))
+
+
 def intervals(t,margin):
     """Piecewise linear positive intervals, retaining separate night/altitude gaps."""
     result=[]
@@ -187,6 +201,31 @@ def classify(e,p):
     return 'PRIMA SCELTA','Transito completo, baseline buona, quota e Luna nei limiti',codes
 
 
+def evaluate(e,p):
+    """Policy UAN v2.2 gate + classification on already computed metrics (no astronomy).
+    full_transit=False -> archive only: eligible=False, exclusion_reason=TRANSIT_NOT_100,
+    no quality_class, no logistics_class, no score, never a selection role.
+    full_transit=True -> the unchanged v2.1 pipeline (score, classify, reason codes)."""
+    e['full_transit']=e['transit_uncovered_seconds']<=FULL_TRANSIT_TOLERANCE_SECONDS
+    e['eligible']=e['full_transit']
+    if not e['eligible']:
+        e['exclusion_reason']='TRANSIT_NOT_100'
+        e['logistics_class']=None;e['score']=None;e['quality_class']=None
+        e['category']='NON ELEGGIBILE'
+        e['reason']=(f'Transito non coperto al 100%: {e["transit_uncovered_seconds"]/60:.1f} min fuori dalle '
+                     f'finestre osservabili ({e["transit_percent"]:.3f}%); solo archivio')
+        e['reason_codes']=['TRANSIT_NOT_100'];e['downgrade_reason']=e['reason']
+        return e
+    e['exclusion_reason']=None
+    e['score']=round(100*score(e,p),1)
+    e['category'],e['reason'],e['reason_codes']=classify(e,p)
+    if e['logistics_class']=='P2': e['reason_codes']=e['reason_codes']+['LOGISTICS_PARTIAL']
+    elif e['logistics_class']=='P3': e['reason_codes']=e['reason_codes']+['LOGISTICS_OUT_OF_SESSION']
+    e['quality_class']=e['category']
+    e['downgrade_reason']=e['reason'] if e['category'] in ('ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO') else ''
+    return e
+
+
 def analyze(raw,target,p,ground=None):
     location=EarthLocation.from_geodetic(p['longitude']*u.deg,p['latitude']*u.deg,p['height_m']*u.m)
     coord=SkyCoord(target['RA'],target['Dec'],unit=(u.hourangle,u.deg),frame='icrs')
@@ -222,6 +261,7 @@ def analyze(raw,target,p,ground=None):
     logistics=(max(logistics[0],dusk) if dusk is not None else logistics[1],logistics[1])
     practical=intersect(windows,[logistics])
     transit_percent=coverage(a,b,windows)
+    uncovered=uncovered_seconds(a,b,windows)
     usable=coverage(a,b,practical)
     trans=(grid>=a)&(grid<=b)
     exact=[float(alt[np.where(grid==x)[0][0]]) for x in (a,m,b)]
@@ -257,7 +297,8 @@ def analyze(raw,target,p,ground=None):
            altitude_ingress_deg=exact[0],altitude_mid_deg=exact[1],altitude_egress_deg=exact[2],
            altitude_min_deg=float(min(alt[trans])),altitude_max_deg=float(max(alt[trans])),
            max_altitude_theoretical_deg=90-abs(p['latitude']-coord.dec.deg),
-           transit_percent=transit_percent,practical_transit_percent=usable,
+           transit_percent=transit_percent,transit_uncovered_seconds=uncovered,
+           practical_transit_percent=usable,
            baseline_before_minutes=before,baseline_after_minutes=after,
            practical_baseline_before_minutes=practical_before,practical_baseline_after_minutes=after,
            logistics_note='Baseline iniziale ridotta dalla disponibilità' if practical_before+0.01<before else 'Baseline non ridotta dagli orari; il dopo può superare il limite del transito',
@@ -293,10 +334,4 @@ def analyze(raw,target,p,ground=None):
         e['logistics_note']='Evento fuori dalla normale serata: conservato nell\'archivio scientifico'
     e['tapir_discrepancy_reason']=('Ricalcolo indipendente degli intervalli a quota 0°, Sole <= soglia; '
                                  'TAPIR usa estremi e arrotondamenti diversi' if e['tapir_anomaly'] else '')
-    e['score']=round(100*score(e,p),1)
-    e['category'],e['reason'],e['reason_codes']=classify(e,p)
-    if e['logistics_class']=='P2': e['reason_codes']=e['reason_codes']+['LOGISTICS_PARTIAL']
-    elif e['logistics_class']=='P3': e['reason_codes']=e['reason_codes']+['LOGISTICS_OUT_OF_SESSION']
-    e['quality_class']=e['category']
-    e['downgrade_reason']=e['reason'] if e['category'] in ('ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO') else ''
-    return e
+    return evaluate(e,p)

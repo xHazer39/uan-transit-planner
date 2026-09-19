@@ -483,7 +483,7 @@ class PrototypeChecks(unittest.TestCase):
         rows=self.rows(events)
         doc,broken=self.document(rows,Path(self.archive),'Europe/Rome','UAN - PRIMA SCELTA',self.legend)
         self.assertIsNone(broken)
-        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.1.1',
+        for marker in ['UAN - PRIMA SCELTA','OUTPUT TAPIR ORIGINALE','policy UAN v2.2.0',
                        'MARKER_TAPIR_ROW','WASP-77 A b','Europe/Rome','PRIMARY','BACKUP1','EXTRA']:
             self.assertIn(marker,doc)
         self.assertEqual(doc.count('MARKER_TAPIR_ROW'),len(rows))
@@ -615,6 +615,159 @@ class PrototypeChecks(unittest.TestCase):
         for bad in ['Only 1 target matches your constraints','Upcoming events for the next 1 day']:
             self.assertNotIn(bad,doc)
         self.assertIn('MARKER_TAPIR_ROW',doc)
+
+
+class EligibilityChecks(unittest.TestCase):
+    """Policy v2.2: only real 100% transits (independent recomputation) enter the pipeline."""
+    P={'severe_altitude_deg':15,'preferred_altitude_deg':30,'excellent_altitude_deg':40,
+       'visibility_altitude_deg':20,'transit_operational_percent':90,'first_choice_min_percent':99.5,
+       'baseline_weak_percent':50,'baseline_good_percent':80,'maximum_uncertainty_minutes':10,
+       'backup_preferred_separation_days':7,'backup_fallback_separation_days':3,
+       'timing_residual_limit_seconds':2,'max_review_events_per_target':3}
+    METRICS=('transit_percent','transit_uncovered_seconds','altitude_min_deg','altitude_mid_deg','altitude_max_deg',
+             'baseline_before_percent','baseline_after_percent','moon_illumination_percent','moon_separation_deg',
+             'moon_risk','uncertainty_minutes','cycle','mid_utc')
+    def ev(self,cycle=1,days=0,uncovered=0.0,**kw):
+        from datetime import datetime,timezone,timedelta
+        mid=datetime(2026,11,1,22,0,tzinfo=timezone.utc)+timedelta(days=days)
+        e=dict(name='X b',cycle=cycle,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
+               ingress_local=mid.isoformat(),egress_local=mid.isoformat(),
+               max_altitude_theoretical_deg=55,altitude_min_deg=31,altitude_mid_deg=40,altitude_max_deg=45,
+               transit_percent=100.0 if uncovered==0 else 100.0*(1-uncovered/10800.0),
+               transit_uncovered_seconds=uncovered,duration_minutes=180,
+               baseline_before_percent=100,baseline_after_percent=100,practical_transit_percent=100,
+               uncertainty_minutes=1,moon_risk='BASSA',magnitude=11,depth_ppt=12,ttv=False,
+               moon_up_during_observable=False,moon_illumination_percent=5,moon_separation_deg=120,
+               moon_min_separation_deg=120,altitude_ingress_deg=35,altitude_egress_deg=33,
+               timing_check_failed=False,logistics_class='P1')
+        e.update(kw)
+        return e
+    def test_1_real_100_percent_is_eligible(self):
+        from observing import evaluate,uncovered_seconds
+        self.assertEqual(uncovered_seconds(0,10800,[(-100,20000)]),0.0)
+        e=evaluate(self.ev(),self.P)
+        self.assertTrue(e['eligible'] and e['full_transit'])
+        self.assertIsNone(e['exclusion_reason'])
+        self.assertEqual((e['quality_class'],e['logistics_class']),('PRIMA SCELTA','P1'))
+        self.assertIsNotNone(e['score'])
+    def test_2_99_999_percent_is_not_eligible(self):
+        from observing import evaluate,uncovered_seconds,FULL_TRANSIT_TOLERANCE_SECONDS as TOL
+        # 99.999% of a 3 h transit = 0.108 s uncovered: displayed as 100.0, never promoted.
+        u=uncovered_seconds(0,10800,[(0,10800*0.99999)])
+        self.assertAlmostEqual(u,0.108,places=6)
+        e=evaluate(self.ev(uncovered=u),self.P)
+        self.assertFalse(e['eligible']);self.assertEqual(e['exclusion_reason'],'TRANSIT_NOT_100')
+        self.assertEqual(f"{e['transit_percent']:.1f}",'100.0')
+        # tolerance is numeric only: below = float noise, above = real gap.
+        self.assertTrue(evaluate(self.ev(uncovered=TOL/2),self.P)['eligible'])
+        self.assertFalse(evaluate(self.ev(uncovered=TOL*2),self.P)['eligible'])
+        self.assertLess(TOL,0.1)
+        # 30 s gap: old classify would give PRIMA (99.7% >= 99.5); gate excludes it.
+        e=evaluate(self.ev(uncovered=30),self.P)
+        self.assertFalse(e['eligible']);self.assertIsNone(e['quality_class'])
+    def test_3_partial_never_in_operational_reports(self):
+        from observing import evaluate
+        from reports import calendar_rows,operational_rows,curated_review_rows
+        part=evaluate(self.ev(uncovered=60),self.P)
+        for rows in (calendar_rows([part],'PRIMA SCELTA'),calendar_rows([part],'ALTERNATIVE'),
+                     operational_rows([part]),curated_review_rows([part],self.P)):
+            self.assertEqual(rows,[])
+        # even a forged operational-looking row is refused when eligible is False
+        forged=dict(self.ev(),eligible=False,quality_class='PRIMA SCELTA',category='PRIMA SCELTA')
+        self.assertEqual(operational_rows([forged]),[])
+        self.assertEqual(curated_review_rows([dict(forged,quality_class='DA VALUTARE')],self.P),[])
+    def test_4_partial_stays_in_archive_results(self):
+        import tempfile,json,csv
+        from pathlib import Path
+        from observing import evaluate
+        from reports import write_reports
+        p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
+        t=dict(name='X b',RA='12:00:00',Dec='+00:00:00')
+        m=dict(profile=p,created_utc='2026-09-15',start='2026-09-15',end_exclusive='2026-09-16',tapir_commit='test-only',command='test-only')
+        part=evaluate(self.ev(uncovered=600),self.P)
+        part.update(ingress_utc=part['mid_utc'],egress_utc=part['mid_utc'],practical=False,reference='')
+        with tempfile.TemporaryDirectory() as d:
+            out=Path(d);(out/'9_ARCHIVIO_COMPLETO').mkdir()
+            write_reports(out,[part],[t],[],m)
+            js=json.loads((out/'9_ARCHIVIO_COMPLETO/risultati.json').read_text())
+            self.assertEqual([(e['cycle'],e['eligible'],e['exclusion_reason']) for e in js],[(1,False,'TRANSIT_NOT_100')])
+            rows=list(csv.DictReader((out/'9_ARCHIVIO_COMPLETO/risultati.csv').open()))
+            self.assertEqual((rows[0]['eligible'],rows[0]['exclusion_reason']),('False','TRANSIT_NOT_100'))
+            for f in ('0_CALENDARIO_OPERATIVO.json','calendario_prima_scelta.json'):
+                self.assertEqual(json.loads((out/'9_ARCHIVIO_COMPLETO'/f).read_text()),[])
+            for f in ('1_PRIMA_SCELTA.html','2_ALTERNATIVE.html','3_DA_VALUTARE.html','0_CALENDARIO_OPERATIVO.html'):
+                self.assertNotIn('TRANSIT_NOT_100',(out/f).read_text() if f!='0_CALENDARIO_OPERATIVO.html' else (out/'9_ARCHIVIO_COMPLETO'/f).read_text())
+            self.assertIn('NON ELEGGIBILE: 1 totali',(out/'0_LEGGIMI.txt').read_text())
+    def test_5_partial_never_gets_selection_role(self):
+        from observing import evaluate
+        from reports import compute_selection
+        events=[evaluate(self.ev(1,0,uncovered=5),self.P),evaluate(self.ev(2,9,uncovered=0.5),self.P)]
+        self.assertEqual(compute_selection(events,self.P),{})
+        self.assertTrue(all('selection_role' not in e for e in events))
+        forged=dict(self.ev(3,18),eligible=False,category='PRIMA SCELTA',quality_class='PRIMA SCELTA',score=99.0)
+        self.assertEqual(compute_selection([forged],self.P),{})
+    def test_6_7_8_full_transit_with_other_issue_is_da_valutare(self):
+        from observing import evaluate
+        for kw,code in ((dict(ttv=True),'TTV'),(dict(moon_risk='ESTREMA'),'MOON_EXTREME'),
+                        (dict(baseline_after_percent=40),'BASELINE_WEAK')):
+            e=evaluate(self.ev(**kw),self.P)
+            self.assertTrue(e['eligible'],code)
+            self.assertEqual(e['quality_class'],'DA VALUTARE',code)
+            self.assertIn(code,e['reason_codes'])
+            self.assertNotIn('TRANSIT_NOT_100',e['reason_codes'])
+    def test_9_prima_and_alternative_only_100_percent(self):
+        from observing import evaluate
+        for uncovered in (0.002,0.108,30,600):
+            for kw in (dict(),dict(moon_risk='ALTA')):
+                e=evaluate(self.ev(uncovered=uncovered,**kw),self.P)
+                self.assertNotIn(e['quality_class'],('PRIMA SCELTA','ALTERNATIVE'))
+        self.assertEqual(evaluate(self.ev(moon_risk='ALTA'),self.P)['quality_class'],'ALTERNATIVE')
+    def test_10_roles_only_100_percent(self):
+        from observing import evaluate
+        from reports import compute_selection
+        events=[evaluate(self.ev(i,d,u),self.P) for i,d,u in ((1,0,0),(2,9,0.5),(3,18,0),(4,27,45),(5,36,0),(6,45,0))]
+        sel=compute_selection(events,self.P)['X b']
+        self.assertEqual([(r,e['cycle']) for r,e in sel],[('PRIMARY',1),('BACKUP1',3),('BACKUP2',5)])
+        self.assertTrue(all(e['transit_percent']==100.0 and e['eligible'] for _,e in sel))
+        self.assertTrue(all('selection_role' not in e for e in events if not e['eligible']))
+    def test_11_12_13_completeness_metrics_and_old_classes_invariant(self):
+        import copy
+        from observing import evaluate,classify,score
+        events=[self.ev(i,i,u,**kw) for i,(u,kw) in enumerate(((0,{}),(0.5,{}),(0,dict(ttv=True)),(3000,{}),
+                                                                   (0,dict(moon_risk='ALTA')),(0,dict(baseline_after_percent=40))))]
+        snap=copy.deepcopy(events)
+        out=[evaluate(e,self.P) for e in events]
+        self.assertEqual([e['cycle'] for e in out],[e['cycle'] for e in snap])  # 11: no cycle lost
+        for a,b in zip(out,snap):
+            for k in self.METRICS: self.assertEqual(a[k],b[k],k)          # 12: metrics untouched
+            if b['transit_uncovered_seconds']==0:                              # 13: old 100% events unchanged
+                self.assertEqual(a['quality_class'],classify(b,self.P)[0])
+                self.assertEqual(a['score'],round(100*score(b,self.P),1))
+    def test_analyze_wires_uncovered_seconds_and_gate(self):
+        import json
+        import astropy.units as u
+        from astropy.coordinates import SkyCoord,EarthLocation
+        from astropy.time import Time
+        from observing import analyze,FULL_TRANSIT_TOLERANCE_SECONDS as TOL
+        p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
+        loc=EarthLocation.from_geodetic(p['longitude']*u.deg,p['latitude']*u.deg,p['height_m']*u.m)
+        c=SkyCoord('04:20:00','+40:00:00',unit=(u.hourangle,u.deg))
+        def run(jd):
+            m=Time(jd,format='jd',scale='utc',location=loc)
+            epoch=float((m.tdb+m.light_travel_time(c,kind='barycentric')).jd)
+            t=dict(name='Synthetic b',RA='04:20:00',Dec='+40:00:00',vmag='11',period='1.0',epoch=repr(epoch),
+                   epoch_uncertainty='0.0005',period_uncertainty='0.000001',duration='2.5',comments='synthetic',depth='10')
+            return analyze({'jd_utc_exact':jd},t,p)
+        full=run(2461360.375)      # 2026-11-15 21:00 UTC, target near meridian at night
+        part=run(2461362.255)      # 2026-11-17 18:07 UTC, ingress before nautical dusk
+        self.assertEqual((full['transit_percent'],full['transit_uncovered_seconds'],full['eligible']),(100.0,0.0,True))
+        self.assertEqual((full['quality_class'],full['logistics_class']),('PRIMA SCELTA','P1'))
+        self.assertLess(part['transit_percent'],100);self.assertGreater(part['transit_uncovered_seconds'],TOL)
+        self.assertFalse(part['eligible']);self.assertEqual(part['exclusion_reason'],'TRANSIT_NOT_100')
+        self.assertEqual((part['quality_class'],part['logistics_class'],part['score']),(None,None,None))
+        self.assertEqual(part['category'],'NON ELEGGIBILE')
+        # uncovered seconds is the duration-based quantity, consistent with the percentage
+        self.assertAlmostEqual(part['transit_uncovered_seconds'],part['duration_minutes']*60*(1-part['transit_percent']/100),places=4)
 
 
 if __name__=='__main__': unittest.main()
