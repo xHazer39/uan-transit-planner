@@ -37,8 +37,9 @@ for e in events:
     if e['practical']:
         assert datetime.fromisoformat(e['egress_local'])<=datetime.fromisoformat(e['practical_transit_end_limit_local'])
         assert datetime.fromisoformat(e['ingress_local'])>=datetime.fromisoformat(e['practical_start_local'])
+    if e['category'] in ('PRIMA SCELTA','ALTERNATIVE'):
+        assert e['eligible'] and e['transit_uncovered_seconds']<=TOL,(e['name'],e['category'],e['transit_percent'])
     if e['category']=='PRIMA SCELTA':
-        assert e['transit_percent']>=p['first_choice_min_percent']-0.05,(e['name'],e['transit_percent'])
         assert e['altitude_min_deg']>=p['preferred_altitude_deg']-0.05
         assert min(e['baseline_before_percent'],e['baseline_after_percent'])>=p['baseline_good_percent']-0.05
         assert e['moon_risk']=='BASSA',('moon',e['name'],e['mid_utc'],e['moon_risk'])
@@ -59,8 +60,8 @@ for e in events:
         assert not e.get('selection_role') and e['transit_percent']<100,('excluded event with role or 100%',e['name'],e['cycle'])
 n_elig=sum(e['eligible'] for e in events);n_excl=sum(not e['eligible'] for e in events)
 assert n_elig+n_excl==len(events)==m['event_count'],'archive must keep every enumerated cycle'
-assert all(e['transit_percent']==100.0 or e['transit_uncovered_seconds']>0 for e in events)
-# Policy v2.1 selection: roles must be operational (P1) and temporally diversified.
+assert all((e['transit_uncovered_seconds']<=TOL)==e['eligible'] for e in events)
+# Policy v2.2.0 selection: roles must be operational (P1) and temporally diversified.
 byt={}
 for e in events:
     if e.get('selection_role'):
@@ -88,7 +89,7 @@ for name,es in byt.items():
               and all(abs(c['mid_ts']-q['mid_ts'])>=fallback for q in picks)]
         assert not free,('backup too close while a separated candidate existed',name,e['selection_role'],
                          min(abs(e['mid_ts']-q['mid_ts']) for q in picks)/86400,len(free))
-# Reporting calendar (v2.1): complete, chronological, pure, roles preserved.
+# Reporting calendar (v2.2.0): complete, chronological, pure, roles preserved.
 cal_path=archive/'calendario_prima_scelta.json'
 assert cal_path.is_file(),'calendar json missing'
 cal=json.loads(cal_path.read_text())
@@ -122,6 +123,7 @@ op_mids=[datetime.fromisoformat(r['mid_local']) for r in op]
 assert op_mids==sorted(op_mids),('operational calendar not chronological',)
 assert all(r['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and r['logistics_class']=='P1' for r in op)
 assert m['reporting']['operational_calendar_events']==len(op)
+assert m['reporting']['operational_scope']=='(PRIMA SCELTA or ALTERNATIVE) and P1 and eligible (full transit)'
 for f in ['0_CALENDARIO_OPERATIVO.html','0_CALENDARIO_OPERATIVO.csv']:
     assert (archive/f).is_file(),('missing',f)
 # Regression cases of the annual 2026-09-15 run: checked only when the package contains those events.
@@ -215,7 +217,7 @@ for r in eph:
     e=by_id_all[r['event_id']]
     assert e['eligible'] and e['full_transit'],('effemeridi: evento non eleggibile',r['event_id'])
     assert e['transit_uncovered_seconds']<=TOL,('effemeridi: transito non completo',r['event_id'])
-    assert float(r['transit_uncovered_seconds'])<=TOL and float(r['transit_percent'])==100.0,r['event_id']
+    assert float(r['transit_uncovered_seconds'])<=TOL,r['event_id']
     assert r['mid_local']==e['mid_local'] and r['target']==e['name'],('effemeridi: riga incoerente',r['event_id'])
 # HTML: una riga per evento del CSV (l'identita' riga-evento e' verificata sul CSV, che ha gli id)
 assert len(re.findall(r'<tr class="q-',eph_html))==len(eph),('effemeridi html: righe != csv',)

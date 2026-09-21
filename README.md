@@ -138,15 +138,16 @@ La distanza può pesare più della fase: 63% a 8.5° è ESTREMA, 90% a 120° è 
 10% affidabilità temporale + 5% comodità oraria. **Magnitudine e profondità non entrano**
 finché non esiste un profilo strumentale reale (saturazione, SNR).
 
-**Selezione per target:** PRIMARY = miglior evento operativo (P1) per classe poi score;
-BACKUP1/BACKUP2 = prossimi con diversificazione temporale (≥ 7 giorni, fallback ≥ 3),
-**ma la quality_class domina sempre la separazione**: una PRIMA SCELTA a 4 giorni batte
-un'ALTERNATIVE a 20. Gli altri eventi PRIMA/P1 diventano **EXTRA** nel calendario:
-visibili, non nascosti.
+**Selezione per target:** PRIMARY = miglior evento operativo (P1) con copertura **100% esatta**, per classe poi score;
+BACKUP1/BACKUP2 = prossimi eventi anch'essi al 100%, con diversificazione temporale (≥ 7 giorni, fallback ≥ 3).
+**DA VALUTARE non riceve più ruoli PRIMARY/BACKUP**: se un target non ha transiti completi, resta nella shortlist di review/archivio senza raccomandazione operativa.
+La quality_class domina sempre la separazione tra i candidati validi: una PRIMA SCELTA a 4 giorni batte un'ALTERNATIVE a 20. Gli altri eventi PRIMA/P1 diventano **EXTRA** nel calendario, visibili e non nascosti.
 
 **Copertura e baseline sono ricalcolate indipendentemente** (Astropy, intersezione
 notte nautica −12° × quota ≥ 20°, griglia 120 s): le percentuali TAPIR non sono mai
 usate come verità (conservate come dati originali, con scarto segnalato).
+
+**Vincolo di completezza:** i calendari/dossier favorevoli (`PRIMA SCELTA` e `ALTERNATIVE`) contengono esclusivamente transiti con copertura ricalcolata pari al 100% esatto; 99,999% non viene arrotondato o promosso.
 
 ## Provenance e riproducibilità
 

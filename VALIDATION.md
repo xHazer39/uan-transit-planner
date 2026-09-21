@@ -378,3 +378,41 @@ WASP-93 b      2031  2027-08-11 22:20  99.9584  99.9585  99.9585    3.34   3.33 
 Il caso piu' vicino alla soglia (WASP-93 b, 3.33 s scoperti) sta 3300 volte sopra la
 tolleranza; la differenza fra 120 s e 10 s di sampling e' al massimo ~0.03 s, quindi
 la griglia non e' il fattore limitante e la classificazione del gate e' stabile.
+
+# Merge di origin/main (9a8bde8) e release v2.3.0 (21 settembre 2026)
+
+`origin/main` conteneva `9a8bde8` "policy: require exact 100% transit coverage" (squash del
+branch `origin/policy/full-transit-100`, 30 commit, albero identico: nessun contenuto ulteriore).
+E' una implementazione alternativa della stessa richiesta, fatta a partire da 49ebe1f: alza a 100
+le soglie percentuali nel profilo e vieta classi/ruoli sotto il 100%. Il lavoro locale risolve lo
+stesso problema a monte, con un gate sulla durata non coperta.
+
+Merge esplicito (`--no-ff`, nessun rebase, nessun force). Principio di risoluzione: una sola fonte
+della regola, il gate `transit_uncovered_seconds <= 1e-3 s`. Da 9a8bde8 sono state tenute solo le
+etichette di versione (v2.1 -> v2.2.0) e il testo piu' preciso del motivo TRANSIT_COVERAGE_LOW.
+
+Sono state RIMOSSE quattro fonti concorrenti della stessa policy, che il merge avrebbe introdotto:
+
+1. `capodimonte.json`: `transit_operational_percent`/`first_choice_min_percent` a 100.
+   Con il gate, un evento eleggibile puo' avere copertura 99.99999% (1e-3 s scoperti su 3 h):
+   `classify` lo avrebbe marcato TRANSIT_COVERAGE_LOW/DA VALUTARE, in diretta contraddizione con
+   il gate e con la semantica "DA VALUTARE = transito completo con un altro problema".
+   Ripristinate le soglie storiche 90 / 99.5, raggiungibili solo a valle del gate.
+2. `planner.validate_profile`: vincolo che imponeva soglie esattamente 100 nel profilo.
+3. `verify_output`: `assert transit_percent >= 100` per PRIMA SCELTA/ALTERNATIVE e le stringhe
+   `operational_scope ... transit_percent == 100`, sostituiti dall'invariante di eleggibilita'.
+4. `reports.compute_selection`: 9a8bde8 rimuoveva DA VALUTARE dalle classi ammesse ai backup
+   (commit "policy: remove review-only backup class"). Cambia la selezione (41 ruoli su 150 nel
+   run annuale) e la policy PRIMARY/BACKUP, esplicitamente fuori dal mandato: ripristinata.
+   Era l'unico conflitto arrivato in un blocco NON conflittuale, individuato dal drift di
+   selezione rilevato da verify_output su CoRoT-2 b c2283.
+
+Tre test introdotti da 9a8bde8 codificavano quelle fonti e sono stati riallineati al gate
+(profilo senza vincolo sul 100%; label favorevole stantia espressa con eligible=False;
+un target con soli DA VALUTARE riceve comunque PRIMARY, policy invariata).
+
+Dopo il merge, sul run annuale: 13264 cicli, ZERO campi diversi, 0_CALENDARIO_OPERATIVO.json,
+calendario_prima_scelta.json, riepilogo_target.json, i dossier 1/2/3 e 0_EFFEMERIDI_100.csv
+byte-identici a prima del merge. 1106 eligible / 12158 esclusi, EFFEMERIDI_100 == eligible,
+ruoli 55/50/45 (41 su DA VALUTARE, invariati), 11/11 boundary case ancora non eleggibili.
+59/59 test; verify_output PASS sull'annuale e su uno smoke HAT-P-23 b / KELT-3 b.

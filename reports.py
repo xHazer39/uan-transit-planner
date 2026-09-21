@@ -63,7 +63,7 @@ QUALITY_RANK={'PRIMA SCELTA':0,'ALTERNATIVE':1,'DA VALUTARE':2,'NON CONSIGLIATO'
 
 
 def compute_selection(events,p):
-    """Policy UAN v2.1: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
+    """Policy UAN v2.2.0: per-target PRIMARY + BACKUP1 + BACKUP2 from the P1 pool,
     ordered by quality class then score, with temporal diversification of backups.
     Policy v2.2: only eligible (full-transit) events can ever hold a role."""
     by={}
@@ -593,7 +593,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     (archive/'target_esclusi.json').write_text(json.dumps(rejections,ensure_ascii=False,indent=2))
     counts=Counter(e['category'] for e in events)
     # Calendari semanticamente puri: 1=PRIMA SCELTA+P1, 2=ALTERNATIVE+P1; 3=review curata.
-    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1.
+    # 0=calendario operativo unico: PRIMA SCELTA e ALTERNATIVE insieme, solo P1 e copertura 100%.
     tz=p['timezone']
     cal1=calendar_rows(events,'PRIMA SCELTA')
     cal2=calendar_rows(events,'ALTERNATIVE')
@@ -613,7 +613,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         'selection_roles_preserved':True,'extra_events_visible':True,
         'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA'),
         'operational_calendar_events':len(cal0),
-        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1',
+        'operational_scope':'(PRIMA SCELTA or ALTERNATIVE) and P1 and eligible (full transit)',
         'dossiers':{'1_PRIMA_SCELTA':len(cal1),'2_ALTERNATIVE':len(cal2),'3_DA_VALUTARE':len(rev3)}}
     # Dossier 1/2/3: dettaglio nel formato TAPIR autentico (renderer downstream).
     role_std='PRIMARY = prima raccomandazione · BACKUP1/BACKUP2 = riserve · EXTRA = ulteriore occasione valida della stessa classe'
@@ -703,8 +703,8 @@ Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
 
 COME LEGGERE IL PACCHETTO
 Classificazione completa di tutti gli eventi nell'archivio; i PDF mostrano solo
-gli eventi eleggibili e operativi (P1) secondo policy UAN v2.2.
-GATE DI ELEGGIBILITA' (v2.2): solo i transiti coperti al 100% dal ricalcolo indipendente
+gli eventi eleggibili e operativi (P1) secondo policy UAN v2.2.0.
+GATE DI ELEGGIBILITA' (v2.2.0): solo i transiti coperti al 100% dal ricalcolo indipendente
 (durata non coperta <= 0.001 s) entrano nella classificazione, nella logistica, nello score,
 nei ruoli PRIMARY/BACKUP/EXTRA e nei report 0/1/2/3. Gli altri restano SOLO nell'archivio
 (risultati.csv/json) con eligible=false, exclusion_reason=TRANSIT_NOT_100, categoria NON ELEGGIBILE.
@@ -798,12 +798,12 @@ Le quote min/max sono campionate, con ingresso/centro/uscita sempre inclusi.
 Rifrazione disattivata, orizzonte piano; ostacoli locali non modellati.
 La copertura è durata dell'intersezione / durata del transito. Non si tronca un 915%:
 si conserva il dato TAPIR e si usa il nuovo calcolo. Scarti >2 punti percentuali sono segnalati.
-Eleggibilita' (policy v2.2): copertura 100% reale, durata non coperta <= 0.001 s; la soglia storica
+Eleggibilita' (policy v2.2.0): copertura 100% reale, durata non coperta <= 0.001 s; la soglia storica
 {p['first_choice_min_percent']:.1f}% per PRIMA SCELTA resta nel codice ma e' raggiungibile solo da transiti al 100%.
 Luna: metriche al centro, minimo della distanza campionato ogni <=10 minuti;
 livelli di rischio BASSA/MODERATA/ALTA/ESTREMA (dettagli nella sezione POLICY).
 
-POLICY UAN TRANSIT PLANNER v2.2 (gerarchia rigida; uno score alto non compensa livelli superiori)
+POLICY UAN TRANSIT PLANNER v2.2.0 (gerarchia rigida; uno score alto non compensa livelli superiori)
 0. Eleggibilita': solo transiti con copertura 100% reale (ricalcolo Astropy, durata non coperta <= 0.001 s).
    Gli altri eventi restano enumerati e misurati nell'archivio ma non ricevono classe, logistica,
    score o ruolo (eligible=false, exclusion_reason=TRANSIT_NOT_100).
@@ -812,7 +812,7 @@ POLICY UAN TRANSIT PLANNER v2.2 (gerarchia rigida; uno score alto non compensa l
    ({p['severe_altitude_deg']}-{p['visibility_altitude_deg']}° MOLTO DIFFICILE, {p['visibility_altitude_deg']}-{p['preferred_altitude_deg']}° MARGINALE,
    {p['preferred_altitude_deg']}-{p['excellent_altitude_deg']}° BUONO, >= {p['excellent_altitude_deg']}° MOLTO FAVOREVOLE).
 3. Copertura transito (ricalcolata indipendentemente, mai la percentuale TAPIR alla cieca):
-   GATE v2.2 a monte di tutto: durata non coperta > 0.001 s (tolleranza numerica, nessun arrotondamento,
+   GATE v2.2.0 a monte di tutto: durata non coperta > 0.001 s (tolleranza numerica, nessun arrotondamento,
    nessuna soglia percentuale) -> NON ELEGGIBILE, solo archivio (eligible=false, TRANSIT_NOT_100).
    Le soglie storiche restano nel codice ma vengono raggiunte solo da transiti coperti al 100%:
    < {p['transit_operational_percent']:.0f}% -> DA VALUTARE; {p['transit_operational_percent']:.0f}-{p['first_choice_min_percent']:.1f}% -> max ALTERNATIVE; >= {p['first_choice_min_percent']:.1f}% -> eleggibile PRIMA SCELTA.
