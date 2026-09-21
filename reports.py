@@ -68,7 +68,7 @@ def compute_selection(events,p):
     Policy v2.2: only eligible (full-transit) events can ever hold a role."""
     by={}
     for e in events:
-        if e.get('eligible',True) and e.get('logistics_class')=='P1' and e['category'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
+        if e.get('eligible') and e.get('logistics_class')=='P1' and e['category'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
             e['mid_ts']=datetime.fromisoformat(e['mid_utc']).timestamp()
             by.setdefault(e['name'],[]).append(e)
     selection={}
@@ -185,7 +185,7 @@ def _prep_calendar(events,qualities,default_role):
     """Shared presentation-only row prep: P1 events of the given quality classes,
     chronological by mid_local. Never mutates input events."""
     rows=[dict(e) for e in events
-          if e.get('eligible',True) and e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
+          if e.get('eligible') and e.get('logistics_class')=='P1' and e.get('quality_class') in qualities]
     for e in rows:
         e['display_role']=e.get('selection_role') or default_role
         e['event_id']=slug(e['name'])+'-c'+str(e['cycle'])
@@ -329,7 +329,7 @@ def curated_review_rows(events,p):
     """DA VALUTARE: per target the best P1 events (max configured), then chronological."""
     by={}
     for e in events:
-        if e.get('eligible',True) and e.get('quality_class')=='DA VALUTARE' and e.get('logistics_class')=='P1':
+        if e.get('eligible') and e.get('quality_class')=='DA VALUTARE' and e.get('logistics_class')=='P1':
             by.setdefault(e['name'],[]).append(e)
     picked=[]
     for name,group in by.items():
@@ -361,7 +361,7 @@ def _calendar_table(rows,tz,target_map,p,notes=True):
             out.append('<tr class="monthrow"><td colspan="15">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
         t=target_map.get(e['name'],{})
         chart,air=links(e,t,p) if t else ('#','#')
-        nasa='https://exoplanetarchive.ipac.caltech.edu/overview/'+quote(e['name'].replace(' ','%20'))
+        nasa='https://exoplanetarchive.ipac.caltech.edu/overview/'+quote(e['name'])
         codes=','.join(e.get('reason_codes') or []) or '&mdash;'
         display=e.get('display_role','')
         role_cls={'PRIMARY':'r-primary','BACKUP1':'r-backup','BACKUP2':'r-backup'}.get(display,'r-extra')
@@ -583,7 +583,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         target_summaries.append(dict(name=name,max_altitude_theoretical_deg=hmax,
             geometry_class=geometry_label(hmax,p),events=len(group),
             eligible_events=sum(bool(e.get('eligible')) for e in group),
-            p1_candidates=sum(e.get('eligible',True) and e.get('logistics_class')=='P1' and e['category'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE') for e in group),
+            p1_candidates=sum(bool(e.get('eligible')) and e.get('logistics_class')=='P1' and e['category'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE') for e in group),
             first_choice_p1_count=len(p1_all),extra_first_choice_p1_count=len(extra_dates),
             extra_first_choice_dates=', '.join(extra_dates),
             best_astronomical_class=CATEGORIES[best] if best is not None else 'NESSUN EVENTO NEL PERIODO',
@@ -628,16 +628,17 @@ Sito: {p['name']} ({p['latitude']}, {p['longitude']}, {p['height_m']} m).
 
 COME LEGGERE IL PACCHETTO
 Classificazione completa di tutti gli eventi nell'archivio; i PDF mostrano solo
-la selezione operativa per target (policy UAN v2.2).
+gli eventi eleggibili e operativi (P1) secondo policy UAN v2.2.
 GATE DI ELEGGIBILITA' (v2.2): solo i transiti coperti al 100% dal ricalcolo indipendente
 (durata non coperta <= 0.001 s) entrano nella classificazione, nella logistica, nello score,
 nei ruoli PRIMARY/BACKUP/EXTRA e nei report 0/1/2/3. Gli altri restano SOLO nell'archivio
 (risultati.csv/json) con eligible=false, exclusion_reason=TRANSIT_NOT_100, categoria NON ELEGGIBILE.
 DA VALUTARE significa: transito completo al 100% ma con un altro problema da valutare.
-1_PRIMA_SCELTA.pdf: per ogni target con almeno una PRIMA SCELTA operativa:
-PRIMARY + BACKUP1 + BACKUP2 come tabelle TAPIR originali.
-2_ALTERNATIVE.pdf: target il cui miglior evento operativo e' ALTERNATIVE: selezione per target.
-3_DA_VALUTARE.pdf: target con solo eventi da valutare: massimo 3 migliori con motivo esplicito.
+1_PRIMA_SCELTA.pdf: TUTTI gli eventi PRIMA SCELTA con logistica P1, in ordine cronologico,
+come tabelle TAPIR originali; ruoli PRIMARY/BACKUP1/BACKUP2 del target, gli altri EXTRA.
+2_ALTERNATIVE.pdf: TUTTI gli eventi ALTERNATIVE con logistica P1, stessa struttura.
+3_DA_VALUTARE.pdf: shortlist di review per target (massimo {p['max_review_events_per_target']}, motivo esplicito), solo P1.
+0_CALENDARIO_OPERATIVO.pdf: PRIMA SCELTA e ALTERNATIVE (P1) insieme, cronologico.
 9_ARCHIVIO_COMPLETO/index.html: TUTTI gli eventi, anche fuori orario e non consigliati.
 risultati.csv / risultati.json: metriche e reason codes completi. target_esclusi.json: esclusioni.
 riepilogo_target.csv: geometria del sito, candidati operativi e selezione per target.
@@ -719,7 +720,8 @@ Le quote min/max sono campionate, con ingresso/centro/uscita sempre inclusi.
 Rifrazione disattivata, orizzonte piano; ostacoli locali non modellati.
 La copertura è durata dell'intersezione / durata del transito. Non si tronca un 915%:
 si conserva il dato TAPIR e si usa il nuovo calcolo. Scarti >2 punti percentuali sono segnalati.
-Eleggibilita' PRIMA SCELTA: copertura >= {p['first_choice_min_percent']:.1f}% (policy v2.1).
+Eleggibilita' (policy v2.2): copertura 100% reale, durata non coperta <= 0.001 s; la soglia storica
+{p['first_choice_min_percent']:.1f}% per PRIMA SCELTA resta nel codice ma e' raggiungibile solo da transiti al 100%.
 Luna: metriche al centro, minimo della distanza campionato ogni <=10 minuti;
 livelli di rischio BASSA/MODERATA/ALTA/ESTREMA (dettagli nella sezione POLICY).
 
@@ -744,7 +746,7 @@ POLICY UAN TRANSIT PLANNER v2.2 (gerarchia rigida; uno score alto non compensa l
 7. Luna (solo se sopra l'orizzonte; sotto orizzonte = BASSA):
    ESTREMA -> DA VALUTARE: illum >=90% & sep <40°, oppure >=70% & sep <20°, oppure >=40% & sep <10°;
    ALTA -> max ALTERNATIVE: illum >=80% & sep <60°, oppure >=50% & sep <40°, oppure >=20% & sep <20°;
-   MODERATA -> max ALTERNATIVE: illum >70% & sep <=100°, oppure >=50% & sep <=70°, oppure >=20% & sep <=40°;
+   MODERATA -> max ALTERNATIVE: illum >=70% & sep <=100°, oppure >=50% & sep <=70°, oppure >=20% & sep <=40°;
    BASSA: nessuna penalita'. La distanza puo' essere piu' grave della fase lunare.
 8. Logistica separata dalla qualita' (logistics_class): P1 transito interamente fra
    {p['session_pref_start']} e {p['session_end']}; P2 parzialmente in serata; P3 fuori normale serata (archivio scientifico).
@@ -756,7 +758,8 @@ POLICY UAN TRANSIT PLANNER v2.2 (gerarchia rigida; uno score alto non compensa l
 Ogni evento porta reason_codes auditabili (es. MOON_HIGH, ALTITUDE_MID_LOW, TARGET_GEOMETRY_MARGINALE).
 SELEZIONE (presentation): PRIMARY + BACKUP1 + BACKUP2 per target dal pool operativo P1, ordinati per
 classe poi score, con diversificazione temporale: separazione preferita >= {p['backup_preferred_separation_days']:.0f} giorni,
-fallback >= {p['backup_fallback_separation_days']:.0f}. I PDF mostrano solo la selezione; tutto il resto resta nell'archivio.
+fallback >= {p['backup_fallback_separation_days']:.0f}. I dossier 1/2 mostrano tutti gli eventi P1 della classe (ruoli + EXTRA),
+il dossier 3 la shortlist di review; tutto il resto resta nell'archivio.
 
 LIMITI COMPUTAZIONALI
 Per errori molto grandi la finestra calcolata per lato è limitata a min(P/2, 24 ore),

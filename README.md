@@ -72,12 +72,12 @@ GaetanoTrovato_<timestamp>/
 │       planner entro 120 s; mismatch → rigenerazione, secondo mismatch → errore.
 │
 ├── 0_LEGGIMI.txt                              come leggere il pacchetto
-├── 1_PRIMA_SCELTA.ics / .google_calendar.csv  export per Google Calendar (97 eventi)
 └── 9_ARCHIVIO_COMPLETO/                       LIVELLO 3 — AUDIT
     ├── index.html                  tutti gli eventi, anche fuori serata e scartati
     ├── risultati.csv / .json       metriche + reason_codes di OGNI ciclo enumerato,
     │                               con eligible / exclusion_reason (TRANSIT_NOT_100)
     ├── calendario_prima_scelta.*   export machine-readable del dossier 1
+    ├── 1_PRIMA_SCELTA.ics / .google_calendar.csv  export Google Calendar del dossier 1 (97 eventi)
     ├── 0_CALENDARIO_OPERATIVO.*    copia machine-readable della dashboard
     ├── riepilogo_target.csv/.json  vista per target: geometria, PRIMARY/BACKUP, EXTRA
     ├── manifest.json               provenance completa (vedi sotto)

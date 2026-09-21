@@ -263,3 +263,79 @@ arcosecondo, conservato in warnings.log. Verificare effemeridi aggiornate prima 
   (rimossi reportlab e pillow); renderer documentati in README.md.
 - README.md riscritto come documentazione definitiva: architettura 0/1/2/3/9,
   policy completa, source-of-truth, provenance, limiti.
+
+# Policy UAN v2.2.0 — gate di eleggibilita' (19-21 settembre 2026)
+
+- Regola nuova: entrano nella pipeline solo i transiti con copertura 100% REALE
+  ricalcolata da Astropy. Criterio sulla durata non coperta
+  (`transit_uncovered_seconds <= 1e-3 s`), non sulla percentuale: nessun round(),
+  nessun 99.5%, nessun valore TAPIR. La tolleranza sta sopra il rumore float
+  dell'aritmetica in secondi unix (~1e-6 s a 1.7e9) e sotto la risoluzione della
+  griglia 120 s con interpolazione lineare dei passaggi.
+- Eventi non eleggibili: restano TUTTI in risultati.csv/json (enumerazione dei
+  cicli invariata) con eligible=false, exclusion_reason=TRANSIT_NOT_100,
+  category NON ELEGGIBILE, senza quality_class, logistics_class, score o ruolo.
+  Nessuno compare in 0_CALENDARIO_OPERATIVO, 1_PRIMA_SCELTA, 2_ALTERNATIVE,
+  3_DA_VALUTARE, ICS/CSV.
+- DA VALUTARE cambia significato: transito completo al 100% con un altro problema
+  (TTV, baseline debole, Luna ESTREMA, quota, dati mancanti), mai transito parziale.
+- Nessun'altra soglia della policy modificata; algoritmo astronomico invariato.
+- Confronto sul run annuale 2026-09-15 (67 target, 13264 eventi), riclassificato
+  offline senza ricalcolare nulla di astronomico:
+  cicli 13264 -> 13264, metriche astronomiche cambiate 0;
+  eligible 1106 / esclusi TRANSIT_NOT_100 12158;
+  PRIMA SCELTA 311 -> 311, ALTERNATIVE 318 -> 318, DA VALUTARE 2493 -> 477,
+  NON CONSIGLIATO 10142 -> 0, NON ELEGGIBILE 0 -> 12158;
+  dossier 1/2 invariati (97/116), 3_DA_VALUTARE 174 -> 116;
+  ruoli 58/58/58 -> 55/50/45 (prima 25 ruoli stavano su eventi <100%);
+  i 1106 eventi al 100% mantengono classe, score e logistica identici; 3 soli
+  cambi di ruolo, tutti conseguenza diretta del gate.
+- Target rimasti senza PRIMARY perche' privi di eventi P1 al 100%:
+  CoRoT-11 b, HAT-P-41 b, WASP-52 b.
+- verify_output: invarianti forti nuove (ogni riga operativa eligible e full
+  transit, nessun TRANSIT_NOT_100 in calendari/dossier/ICS, esclusi tutti in
+  archivio, enumerazione completa, DA VALUTARE mai parziale).
+- Bug latenti pre-esistenti trovati e corretti: export calendario_prima_scelta.*
+  non piu' scritto da 49d48d0; lookup di versione reportlab dopo la rimozione in
+  4b103f4 (CLI in errore all'avvio); tapir_event_html non importato in planner.py
+  (NameError a fine run).
+
+# Audit incrociato esterno (21 settembre 2026)
+
+Revisione avversaria in due passate (scout + verificatore, z-ai/glm-5.3-flash via
+OpenRouter, ~$0.03) sull'intero sorgente + docs + test. Output integrale in
+verification/audit-glm/. Ogni finding riverificato sul codice prima di agire.
+
+Corretti:
+- verify_output era cucito sul run annuale (WASP-77 10/11, KELT-1 c2935/c2981,
+  KELT-16 21/09 senza guardia): crashava su qualunque altro pacchetto. Ora i casi
+  di regressione si applicano solo se quegli eventi esistono. Provato: PASS su un
+  pacchetto HAT-P-3 b / Qatar-5 b di 14 giorni.
+- verify_output imponeva |residuo BJD| < 2 s a ogni evento, mentre la policy
+  ammette residui maggiori con classe DA VALUTARE (TIMING_FAILED) e il limite e'
+  un parametro di profilo. Ora verifica la coerenza del flag con
+  timing_residual_limit_seconds.
+- Gate fail-open: compute_selection/calendari/shortlist usavano
+  e.get('eligible',True); su un risultati.json pre-v2.2 (path di riclassificazione
+  offline documentato) un transito parziale sarebbe rientrato. Ora fail-closed.
+- Separazione dei backup verificata solo rispetto a PRIMARY: ora rispetto a tutti
+  i pick precedenti, con la deroga documentata del fallback (quando nessun
+  candidato del target e' abbastanza separato). Il primo giro ha trovato
+  KELT-9 b a 2.96 giorni: legittimo, e' il fallback.
+- Link NASA nei calendari: quote() su un nome gia' pre-escaped produceva
+  %2520 (link rotti per ogni target con spazi).
+- Testi 0_LEGGIMI/NOTE_SELEZIONE allineati ai report reali (dossier 1/2 = tutti
+  gli eventi P1 della classe con EXTRA, non solo la selezione; eleggibilita' v2.2
+  al posto del 99.5%; Luna MODERATA illum >=70 come nel codice) e albero del
+  pacchetto in README (ICS/CSV stanno in 9_ARCHIVIO_COMPLETO).
+- Assert tautologico sulla copertura dell'identity dei frammenti (+n-n).
+
+Respinti dopo verifica: indice fisso dts[2] in tapir_fragment_identity
+(speculativo, e comunque errore rumoroso, non una raccomandazione sbagliata);
+moon_risk con Luna sopra l'orizzonte solo durante la finestra osservabile
+(conforme alla policy, direzione conservativa); disallineamento geocentrico vs
+baricentrico ai bordi della finestra (l'effetto reale e' la derivata del light
+travel time, ~5 s/giorno, non gli 8 minuti ipotizzati).
+
+55/55 test; verify_output PASS sul pacchetto annuale riclassificato e su un
+pacchetto smoke con target diversi.

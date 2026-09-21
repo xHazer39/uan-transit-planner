@@ -169,7 +169,8 @@ class SelectionChecks(unittest.TestCase):
     def ev(self,cycle,days,score,cat='PRIMA SCELTA'):
         mid=self.base+self.timedelta(days=days)
         return dict(name='X b',mid_utc=mid.isoformat(),mid_local=mid.isoformat(),category=cat,
-                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1')
+                    quality_class=cat,score=score,cycle=cycle,logistics_class='P1',
+                    eligible=True,full_transit=True,transit_percent=100.0)
     def roles(self,events):
         sel=self.compute_selection(events,self.p)['X b']
         return [(r,e['cycle'],e['category']) for r,e in sel]
@@ -201,7 +202,8 @@ class SelectionChecks(unittest.TestCase):
         def ev(cycle,days,score,cat='PRIMA SCELTA'):
             mid=base+timedelta(days=days)
             return dict(name='X b',mid_utc=mid.isoformat(),mid_local=mid.isoformat(),category=cat,
-                        quality_class=cat,score=score,cycle=cycle,logistics_class='P1')
+                        quality_class=cat,score=score,cycle=cycle,logistics_class='P1',
+                        eligible=True,full_transit=True,transit_percent=100.0)
         events=[ev(1,0,95.0),ev(2,1,94.9),ev(3,2,94.8),ev(4,20,93.5)]
         sel=compute_selection(events,p)
         roles=sel['X b']
@@ -232,7 +234,7 @@ class ChronologyChecks(unittest.TestCase):
         def ev(cycle,mid_local,mid_utc,name,role,cat='PRIMA SCELTA'):
             return dict(name=name,cycle=cycle,mid_utc=mid_utc,mid_local=mid_local,
                         category=cat,quality_class=cat,logistics_class='P1',score=90.0,
-                        selection_role=role)
+                        eligible=True,full_transit=True,transit_percent=100.0,selection_role=role)
         return [ev(1,'2026-10-14T22:29:00+02:00','2026-10-14T20:29:00+00:00','Zeta b','PRIMARY'),
                 ev(2,'2026-11-14T22:29:00+01:00','2026-11-14T21:29:00+00:00','Zeta b','BACKUP1'),
                 ev(3,'2026-12-08T22:29:00+01:00','2026-12-08T21:29:00+00:00','Zeta b','BACKUP2'),
@@ -285,6 +287,7 @@ class CalendarChecks(unittest.TestCase):
         return dict(name=name,cycle=cycle,mid_utc=mid.astimezone(timezone.utc).isoformat(),
                     mid_local=mid.isoformat(),start_local=mid.isoformat(),end_local=mid.isoformat(),
                     category=cat,quality_class=cat,logistics_class=log,score=score,
+                    eligible=True,full_transit=True,
                     altitude_ingress_deg=35,altitude_mid_deg=40,altitude_egress_deg=33,
                     transit_percent=100,baseline_before_percent=100,baseline_after_percent=100,
                     moon_risk='BASSA',moon_illumination_percent=3,moon_min_separation_deg=120,
@@ -456,6 +459,7 @@ class PrototypeChecks(unittest.TestCase):
         mid=self.base+self.timedelta(days=days)
         return dict(name=name,cycle=cycle,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
                     category=cat,quality_class=cat,logistics_class=log,score=score,
+                    eligible=True,full_transit=True,transit_percent=100.0,
                     selection_role=None,tapir_event_html='T/frag.html')
     def roles(self,events):
         from reports import compute_selection
@@ -768,6 +772,68 @@ class EligibilityChecks(unittest.TestCase):
         self.assertEqual(part['category'],'NON ELEGGIBILE')
         # uncovered seconds is the duration-based quantity, consistent with the percentage
         self.assertAlmostEqual(part['transit_uncovered_seconds'],part['duration_minutes']*60*(1-part['transit_percent']/100),places=4)
+
+
+class AuditRegressionChecks(unittest.TestCase):
+    """Audit 2026-09-21 (GLM cross-review): reporting text, links and the legacy-input gate."""
+    def setUp(self):
+        import json
+        from pathlib import Path
+        self.p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
+    def ev(self,**kw):
+        from datetime import datetime,timezone
+        mid=datetime(2026,11,1,22,0,tzinfo=timezone.utc)
+        e=dict(name='WASP-142 b',cycle=7,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
+               ingress_utc=mid.isoformat(),egress_utc=mid.isoformat(),
+               ingress_local=mid.isoformat(),egress_local=mid.isoformat(),
+               category='PRIMA SCELTA',quality_class='PRIMA SCELTA',logistics_class='P1',score=95.0,
+               transit_percent=100.0,transit_uncovered_seconds=0.0,practical=True,reason='',reason_codes=[],
+               altitude_ingress_deg=35,altitude_mid_deg=40,altitude_egress_deg=33,altitude_min_deg=33,
+               altitude_max_deg=45,baseline_before_percent=100,baseline_after_percent=100,
+               moon_risk='BASSA',moon_illumination_percent=3,moon_min_separation_deg=120,
+               eligible=True,exclusion_reason=None,full_transit=True,reference='')
+        e.update(kw)
+        return e
+    def test_legacy_event_without_eligible_is_not_operational(self):
+        """A pre-v2.2 risultati.json has no `eligible` key: the gate must fail closed, never
+        default a 97% transit back into calendars, dossiers or roles (audit 2026-09-21, F5)."""
+        from reports import compute_selection,calendar_rows,operational_rows,curated_review_rows
+        legacy=self.ev(transit_percent=97.0);legacy.pop('eligible');legacy.pop('full_transit')
+        self.assertEqual(compute_selection([legacy],self.p),{})
+        self.assertEqual(operational_rows([legacy]),[])
+        self.assertEqual(calendar_rows([legacy],'PRIMA SCELTA'),[])
+        self.assertEqual(curated_review_rows([dict(legacy,quality_class='DA VALUTARE',category='DA VALUTARE')],self.p),[])
+        self.assertNotIn('selection_role',legacy)
+    def test_nasa_link_is_not_double_encoded(self):
+        """`quote` over a pre-escaped name produced %2520: every multi-word target had a broken
+        NASA link in every calendar row (audit 2026-09-21, N2)."""
+        from reports import _calendar_table
+        e=dict(self.ev(),display_role='PRIMARY',event_id='x')
+        e['start_local'],e['end_local']=e['ingress_local'],e['egress_local']
+        html=_calendar_table([e],'Europe/Rome',{},self.p)
+        self.assertIn('/overview/WASP-142%20b',html)
+        self.assertNotIn('%2520',html)
+    def test_readme_texts_match_the_actual_reports(self):
+        """0_LEGGIMI/NOTE_SELEZIONE described the v2.1 per-target selection and the 99.5% eligibility:
+        both superseded by the v2.2 gate and by the all-P1 dossiers (audit 2026-09-21, F4)."""
+        import tempfile,json
+        from pathlib import Path
+        from reports import write_reports
+        t=dict(name='WASP-142 b',RA='12:00:00',Dec='+00:00:00')
+        m=dict(profile=self.p,created_utc='2026-09-21',start='2026-09-21',end_exclusive='2026-09-22',
+               tapir_commit='test-only',command='test-only')
+        with tempfile.TemporaryDirectory() as d:
+            out=Path(d);(out/'9_ARCHIVIO_COMPLETO').mkdir()
+            write_reports(out,[],[t],[],m)
+            leggimi=(out/'0_LEGGIMI.txt').read_text()
+            notes=(out/'9_ARCHIVIO_COMPLETO/NOTE_SELEZIONE.txt').read_text()
+        for text,label in ((leggimi,'0_LEGGIMI.txt'),(notes,'NOTE_SELEZIONE.txt')):
+            self.assertNotIn('I PDF mostrano solo la selezione',text,label)
+            self.assertIn('policy UAN v2.2',text.replace('v2.2.0','v2.2'),label)
+        self.assertIn('TUTTI gli eventi PRIMA SCELTA con logistica P1',leggimi)
+        self.assertIn('durata non coperta <= 0.001 s',notes)
+        self.assertNotIn("Eleggibilita' PRIMA SCELTA: copertura >= 99.5%",notes)
+        self.assertIn('illum >=70%',notes)   # MOON_RULES usa >=70, non >70
 
 
 if __name__=='__main__': unittest.main()

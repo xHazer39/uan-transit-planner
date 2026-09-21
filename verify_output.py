@@ -33,7 +33,7 @@ for e in events:
     for k in ['transit_percent','practical_transit_percent','baseline_before_percent','baseline_after_percent']:
         assert 0<=e[k]<=100,(e['name'],k,e[k])
     assert datetime.fromisoformat(e['ingress_utc'])<datetime.fromisoformat(e['mid_utc'])<datetime.fromisoformat(e['egress_utc'])
-    assert abs(e['timing_residual_seconds'])<2
+    assert e['timing_check_failed']==(abs(e['timing_residual_seconds'])>p['timing_residual_limit_seconds']),('timing flag drift',e['name'],e['cycle'])
     if e['practical']:
         assert datetime.fromisoformat(e['egress_local'])<=datetime.fromisoformat(e['practical_transit_end_limit_local'])
         assert datetime.fromisoformat(e['ingress_local'])>=datetime.fromisoformat(e['practical_start_local'])
@@ -66,13 +66,28 @@ for e in events:
     if e.get('selection_role'):
         assert e['eligible'] and e['full_transit'],('role on non-eligible',e['name'],e['cycle'])
         byt.setdefault(e['name'],[]).append(e)
+POOL={}
+for e in events:
+    if e['eligible'] and e['logistics_class']=='P1' and e['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE'):
+        POOL.setdefault(e['name'],[]).append(e)
+ORDER=['PRIMARY','BACKUP1','BACKUP2']
 for name,es in byt.items():
     for e in es:
         assert e['logistics_class']=='P1',('selected not P1',name,e['mid_utc'])
-        assert e['selection_role'] in ('PRIMARY','BACKUP1','BACKUP2')
-    for e in es[1:]:
-        gap=abs(e['mid_ts']-es[0]['mid_ts'])
-        assert gap>=p['backup_fallback_separation_days']*86400-120,('backup too close',name,gap/86400)
+        assert e['selection_role'] in ORDER
+    es.sort(key=lambda e:ORDER.index(e['selection_role']))
+    fallback=p['backup_fallback_separation_days']*86400-120
+    # Separation is required from EVERY earlier pick, not only from PRIMARY; a closer backup is
+    # legitimate only on the documented fallback path, i.e. when no candidate of the target was
+    # far enough from all of them. Derived from the events alone, independent of compute_selection.
+    for i,e in enumerate(es[1:],1):
+        picks=es[:i]
+        if all(abs(e['mid_ts']-q['mid_ts'])>=fallback for q in picks):
+            continue
+        free=[c for c in POOL[name] if all(c is not q for q in picks)
+              and all(abs(c['mid_ts']-q['mid_ts'])>=fallback for q in picks)]
+        assert not free,('backup too close while a separated candidate existed',name,e['selection_role'],
+                         min(abs(e['mid_ts']-q['mid_ts']) for q in picks)/86400,len(free))
 # Reporting calendar (v2.1): complete, chronological, pure, roles preserved.
 cal_path=archive/'calendario_prima_scelta.json'
 assert cal_path.is_file(),'calendar json missing'
@@ -109,7 +124,9 @@ assert all(r['quality_class'] in ('PRIMA SCELTA','ALTERNATIVE') and r['logistics
 assert m['reporting']['operational_calendar_events']==len(op)
 for f in ['0_CALENDARIO_OPERATIVO.html','0_CALENDARIO_OPERATIVO.csv']:
     assert (archive/f).is_file(),('missing',f)
-if any(t['name']=='KELT-16 b' for t in targets):
+# Regression cases of the annual 2026-09-15 run: checked only when the package contains those events.
+has=lambda name,prefix: any(e['name']==name and e['mid_local'].startswith(prefix) for e in events)
+if has('KELT-16 b','2026-09-21T23:16'):
     kel=[r for r in op if r['target']=='KELT-16 b' and r['mid_local'].startswith('2026-09-21')]
     assert kel and kel[0]['quality_class']=='ALTERNATIVE',('KELT-16 21/09 missing or reclassified',kel)
 # Dossier 1/2/3: set esatti, anchor, nessun ID duplicato, regression cases.
@@ -130,11 +147,13 @@ for base,anchors_expected in exp_d.items():
     assert found==anchors_expected,('dossier set mismatch',base,len(found),len(anchors_expected))
     for href in re.findall(r'href="#(event-[^"]+)"',doc):
         assert href in found,('anchor without target',base,href)
-assert 'event-'+(slug('WASP-77 A b')+'-c'+str(next(e['cycle'] for e in events
-        if e['name']=='WASP-77 A b' and e['mid_local'].startswith('2026-11-10')))).lower() in exp_d['1_PRIMA_SCELTA']
-k16='event-'+(slug('KELT-16 b')+'-c'+str(next(e['cycle'] for e in events
-     if e['name']=='KELT-16 b' and e['mid_local'].startswith('2026-09-21T23:16')))).lower()
-assert k16 in exp_d['2_ALTERNATIVE'] and k16 not in exp_d['1_PRIMA_SCELTA'],('KELT-16 misplaced',)
+if has('WASP-77 A b','2026-11-10'):
+    assert 'event-'+(slug('WASP-77 A b')+'-c'+str(next(e['cycle'] for e in events
+            if e['name']=='WASP-77 A b' and e['mid_local'].startswith('2026-11-10')))).lower() in exp_d['1_PRIMA_SCELTA']
+if has('KELT-16 b','2026-09-21T23:16'):
+    k16='event-'+(slug('KELT-16 b')+'-c'+str(next(e['cycle'] for e in events
+         if e['name']=='KELT-16 b' and e['mid_local'].startswith('2026-09-21T23:16')))).lower()
+    assert k16 in exp_d['2_ALTERNATIVE'] and k16 not in exp_d['1_PRIMA_SCELTA'],('KELT-16 misplaced',)
 # Identity di ogni frammento incorporato: target + midpoint TAPIR == planner (tol 2 min).
 from reports import tapir_fragment_identity
 from datetime import datetime as _DT
@@ -153,19 +172,20 @@ for e in events:
     exp=_DT.fromisoformat(e['mid_utc']).replace(tzinfo=None)
     assert mid is not None and abs((mid-exp).total_seconds())<=120,('fragment mid mismatch',slug(e['name'])+'-c'+str(e['cycle']),str(mid))
     checked+=1
-assert checked>=len(exp_d['1_PRIMA_SCELTA'])+len(exp_d['2_ALTERNATIVE'])+len(exp_d['3_DA_VALUTARE'])-len(exp_d['3_DA_VALUTARE'])
+assert checked==len(exp_d['1_PRIMA_SCELTA'])+len(exp_d['2_ALTERNATIVE'])+len(exp_d['3_DA_VALUTARE']),('fragment identity coverage',checked)
 # regression KELT-1: c2935 (16/09) e c2981 (11/11) frammenti distinti e coerenti
 k1={e['cycle']:e for e in events if e['name']=='KELT-1 b' and e['cycle'] in (2935,2981)}
-assert set(k1)=={2935,2981}
+assert set(k1) in ({2935,2981},set()),('KELT-1 regression cycles partially present',set(k1))
 for cyc,e in k1.items():
     frag=(archive/(slug(e['name'])+'/tapir_event_c'+str(e['cycle'])+'.html')).read_text()
     name,mid=tapir_fragment_identity(frag)
     exp=_DT.fromisoformat(e['mid_utc']).replace(tzinfo=None)
     assert name=='KELT-1 b' and abs((mid-exp).total_seconds())<=120,('KELT-1 regression',cyc,str(mid))
     assert abs((mid-exp).total_seconds())<=120
-m2935=_DT.fromisoformat(k1[2935]['mid_utc']).replace(tzinfo=None)
-m2981=_DT.fromisoformat(k1[2981]['mid_utc']).replace(tzinfo=None)
-assert abs((m2935-m2981).total_seconds())>86400,('KELT-1 midpoints too close',)
+if k1:
+    m2935=_DT.fromisoformat(k1[2935]['mid_utc']).replace(tzinfo=None)
+    m2981=_DT.fromisoformat(k1[2981]['mid_utc']).replace(tzinfo=None)
+    assert abs((m2935-m2981).total_seconds())>86400,('KELT-1 midpoints too close',)
 # Re-evaluate up to three partial events at 30-second sampling, independent of rendering.
 convergence=[]
 for e in [e for e in events if 1<e['transit_percent']<99][:3]:
