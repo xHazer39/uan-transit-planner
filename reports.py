@@ -575,11 +575,13 @@ def write_ephemeris_100(out,rows,tz):
 def consegna_partition(events):
     """(tutti, favorevoli, altri) per la consegna UAN. Nessuna nuova soglia e nessuna
     riclassificazione: `tutti` sono gli eventi eleggibili in ordine cronologico (ephemeris_rows),
-    `favorevoli` quelli che internamente sono gia' PRIMA SCELTA, `altri` esattamente il resto.
-    Per costruzione favorevoli e altri sono disgiunti e la loro unione e' l'insieme eleggibile."""
+    `favorevoli` quelli che internamente sono gia' PRIMA SCELTA e ricadono nella serata operativa
+    (logistics P1), `altri` esattamente il resto. Per costruzione favorevoli e altri sono disgiunti
+    e la loro unione e' l'insieme eleggibile."""
     allrows=ephemeris_rows(events)
-    fav=[r for r in allrows if r['quality_class']=='PRIMA SCELTA']
-    other=[r for r in allrows if r['quality_class']!='PRIMA SCELTA']
+    favourable=lambda r: r['quality_class']=='PRIMA SCELTA' and r['logistics_class']=='P1'
+    fav=[r for r in allrows if favourable(r)]
+    other=[r for r in allrows if not favourable(r)]
     return allrows,fav,other
 
 
@@ -587,19 +589,14 @@ def consegna_summary_document(rows,targets,tz):
     """0_RIEPILOGO_TRANSITI_COMPLETI: tabella tecnica compatta di TUTTI gli eventi eleggibili.
     Nessuna tassonomia interna (classi, ruoli, score, logistica, reason codes, rischio lunare)."""
     head=('<tr><th>Data</th><th>Target</th><th>Ingresso</th><th>Centro</th><th>Uscita</th>'
-          '<th>Elevazione i/c/u</th><th>Baseline prima/dopo</th><th>Luna</th>'
-          '<th>Finestra osservativa suggerita</th></tr>')
+          '<th>Elevazione i/c/u</th><th>Baseline prima/dopo</th><th>Luna</th></tr>')
     body=['<table class="cal">'+head]
     current=None
     for r in rows:
         mid=datetime.fromisoformat(r['mid_local'])
         if (mid.year,mid.month)!=current:
             current=(mid.year,mid.month)
-            body.append('<tr class="monthrow"><td colspan="9">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
-        window='&mdash;'
-        if r.get('practical_start_local') and r.get('practical_transit_end_limit_local'):
-            window=(datetime.fromisoformat(r['practical_start_local']).strftime('%H:%M')+'&ndash;'
-                    +datetime.fromisoformat(r['practical_transit_end_limit_local']).strftime('%H:%M'))
+            body.append('<tr class="monthrow"><td colspan="8">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
         body.append('<tr>'
             +'<td>'+mid.strftime('%d/%m')+'</td><td class="tgt">'+html.escape(r['target'])+'</td>'
             +'<td>'+datetime.fromisoformat(r['ingress_local']).strftime('%H:%M')+'</td>'
@@ -607,8 +604,7 @@ def consegna_summary_document(rows,targets,tz):
             +'<td>'+datetime.fromisoformat(r['egress_local']).strftime('%H:%M')+'</td>'
             +'<td>'+fmt(r['altitude_ingress_deg'],0)+'/'+fmt(r['altitude_mid_deg'],0)+'/'+fmt(r['altitude_egress_deg'],0)+'&deg;</td>'
             +'<td>'+fmt(r['baseline_before_percent'],0)+'% / '+fmt(r['baseline_after_percent'],0)+'%</td>'
-            +'<td>'+fmt(r['moon_illumination_percent'],0)+'% @ '+fmt(r['moon_min_separation_deg'],0)+'&deg;</td>'
-            +'<td>'+window+'</td></tr>')
+            +'<td>'+fmt(r['moon_illumination_percent'],0)+'% @ '+fmt(r['moon_min_separation_deg'],0)+'&deg;</td></tr>')
     body.append('</table>')
     names=[t['name'] for t in targets]
     with_events=sorted({r['target'] for r in rows})
@@ -622,8 +618,8 @@ def consegna_summary_document(rows,targets,tz):
            +str(len(without))+(' ('+html.escape(', '.join(without))+')' if without else '')+'</p></div>'
            '<p style="font-size:10px">Elevazione i/c/u = altezza del target a ingresso, centro e uscita del '
            'transito. Baseline prima/dopo = frazione osservabile della finestra richiesta ai due lati del '
-           'transito. Luna = illuminazione @ separazione angolare minima. La finestra osservativa suggerita '
-           'e\' l\'intervallo utile della serata; il transito e\' comunque osservabile per intero.</p>')
+           'transito. Luna = illuminazione @ separazione angolare minima. Gli orari di osservazione '
+           'consigliati sono riportati nelle schede TAPIR dei due documenti di dettaglio.</p>')
     return _HEAD.format(title='EFFEMERIDI DEI TRANSITI INTEGRALMENTE OSSERVABILI',assets='',
                         body=cover+'\n'.join(body))
 
@@ -733,7 +729,7 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     n_all,n_fav,n_other=write_consegna_uan(out,archive,events,target_map,p,tz)
     manifest['reporting']['consegna_uan']={'folder':'CONSEGNA_UAN','pdf_only':True,
         'total_full_transits':n_all,'favourable':n_fav,'other':n_other,
-        'scope':'all and only eligible; favourable = internal PRIMA SCELTA, other = the rest'}
+        'scope':'all and only eligible; favourable = internal PRIMA SCELTA and P1, other = the rest'}
     index=[]
     target_summaries=[]
     style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'

@@ -945,7 +945,7 @@ class EphemerisViewChecks(unittest.TestCase):
                                    '2_ALTRE_OCCASIONI_TRANSITO_COMPLETO.pdf'])   # solo i tre PDF
         self.assertEqual((m['reporting']['consegna_uan']['favourable'],
                           m['reporting']['consegna_uan']['other'],
-                          m['reporting']['consegna_uan']['total_full_transits']),(1,1,2))
+                          m['reporting']['consegna_uan']['total_full_transits']),(0,2,2))
         self.assertEqual([r['event_id'] for r in rows],['A_b-c1','B_b-c2'])
         self.assertEqual({r['event_id'] for r in rows},
                          {slug(e['name'])+'-c'+str(e['cycle']) for e in archive if e['eligible']})
@@ -998,8 +998,9 @@ class ConsegnaUanChecks(unittest.TestCase):
         self.assertEqual(ids(fav)&ids(other),set())
         self.assertEqual(ids(fav)|ids(other),eligible)
         self.assertEqual(len(fav)+len(other),len(allrows))
-        self.assertEqual(ids(fav),{'A_b-c1','D_b-c4'})                # PRIMA SCELTA, P1 e P2
-        self.assertEqual(ids(other),{'B_b-c2','C_b-c3'})              # ALTERNATIVE e DA VALUTARE
+        self.assertEqual(ids(fav),{'A_b-c1'})                         # PRIMA SCELTA e P1
+        # D b e' PRIMA SCELTA ma P2: sta fra le altre occasioni, non sparisce
+        self.assertEqual(ids(other),{'B_b-c2','C_b-c3','D_b-c4'})
         self.assertNotIn('E_b-c5',ids(allrows))                       # nessun non eleggibile
         mids=[r['mid_local'] for r in allrows]
         self.assertEqual(mids,sorted(mids))
@@ -1013,6 +1014,9 @@ class ConsegnaUanChecks(unittest.TestCase):
         self.assertIn('EFFEMERIDI DEI TRANSITI INTEGRALMENTE OSSERVABILI',doc)
         self.assertIn('Osservatorio di Capodimonte',doc)
         self.assertIn('senza alcun transito completo nella finestra analizzata: 2',doc)  # E b e Z b
+        # La fascia operativa del planner non e' la "Suggested obs." di TAPIR: niente colonna ambigua.
+        self.assertNotIn('Finestra osservativa suggerita',doc)
+        self.assertEqual(doc.count('<th>'),8)
         for banned in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO','PRIMARY',
                        'BACKUP1','BACKUP2','EXTRA','Score','ESTREMA','MODERATA','Trans%','P1','P3'):
             self.assertNotIn(banned,doc,banned)
