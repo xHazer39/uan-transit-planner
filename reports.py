@@ -439,11 +439,14 @@ def calendar_pdf(path,title,rows,tz,target_map,p):
     return _chromium_render(calendar_document(rows,title,tz,target_map,p),path)
 
 
-def tapir_dossier_document(rows,archive,tz,title,role_legend):
+def tapir_dossier_document(rows,archive,tz,title,role_legend,show_roles=True,subtitle=None):
     """Official dossier: planner index + disclaimer + authentic aggregated TAPIR fragments.
     rows must already be the chosen chronological subset. Presentation only: never mutates
-    events, never reclassifies, never re-runs TAPIR. Returns (html, first_broken_event_id)."""
-    idx=['<table class="idx"><tr><th>Data</th><th>Target</th><th>Centro locale</th><th>Ruolo</th></tr>']
+    events, never reclassifies, never re-runs TAPIR. Returns (html, first_broken_event_id).
+    show_roles=False drops the internal taxonomy (roles, classes) from the rendered page only:
+    same fragments, same order, same data - it is the CONSEGNA_UAN presentation."""
+    idx=['<table class="idx"><tr><th>Data</th><th>Target</th><th>Centro locale</th>'
+         +('<th>Ruolo</th>' if show_roles else '')+'</tr>']
     body=[];assets='';first=True;current=None
     for n,e in enumerate(rows):
         mid=datetime.fromisoformat(e['mid_local'])
@@ -457,8 +460,8 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
         else:
             body.append('</div><div class="evblk" id="'+anchor+'">')
         idx.append('<tr><td><a href="#'+anchor+'">'+mid.strftime('%d/%m/%Y')+'</a></td><td class="tgt">'
-                   +html.escape(e['name'])+'</td><td>'+mid.strftime('%H:%M')+'</td><td class="role">'
-                   +e['display_role']+'</td></tr>')
+                   +html.escape(e['name'])+'</td><td>'+mid.strftime('%H:%M')+'</td>'
+                   +('<td class="role">'+e['display_role']+'</td>' if show_roles else '')+'</tr>')
         page=archive/e['tapir_event_html']
         pieces=_tapir_pieces(page.read_text()) if page.is_file() else None
         if pieces is None:
@@ -468,8 +471,9 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
             assets+=a;first=False
         # namespace every HTML id of the fragment: no duplicate ids in the aggregated page
         t=re.sub(r'\bid="([^"]*)"',lambda m:f'id="ev{n}-{m.group(1)}"',t)
-        body.append('<p class="rolehdr"><b>'+html.escape(e['name'])+'</b> — '+e['display_role']
-                    +' — centro locale '+mid.strftime('%d/%m/%Y %H:%M')+' '+html.escape(tz)+'</p>'+t)
+        body.append('<p class="rolehdr"><b>'+html.escape(e['name'])+'</b> — '
+                    +(e['display_role']+' — ' if show_roles else '')
+                    +'centro locale '+mid.strftime('%d/%m/%Y %H:%M')+' '+html.escape(tz)+'</p>'+t)
     if rows: body.append('</div>')
     idx.append('</table>')
     period=(rows[0]['mid_local'][:10]+' → '+rows[-1]['mid_local'][:10]) if rows else 'n/d'
@@ -477,9 +481,13 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
     cover=('<div class="coverbox"><h1>'+html.escape(title)+'</h1>'
            '<p><b>'+str(len(rows))+' finding</b> · '+str(ntarget)+' target · periodo '+period+'</p>'
            '<p>Timezone operativo del planner: <b>'+html.escape(tz)+'</b></p>'
-           '<p>Ruoli: '+role_legend+'</p></div>')
-    disclaimer=('<div class="disclaimer"><b>Gli eventi inclusi sono selezionati dal UAN Transit Planner '
-                'secondo policy UAN v2.2.0 (solo transiti coperti al 100%, ricalcolo indipendente).</b><br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
+           +('<p>Ruoli: '+role_legend+'</p>' if show_roles else
+             ('<p>'+html.escape(subtitle)+'</p>' if subtitle else ''))+'</div>')
+    disclaimer=('<div class="disclaimer">'+('<b>Gli eventi inclusi sono selezionati dal UAN Transit Planner '
+                'secondo policy UAN v2.2.0 (solo transiti coperti al 100%, ricalcolo indipendente).</b>'
+                if show_roles else '<b>Tutti gli eventi riportati hanno il transito integralmente '
+                'osservabile dal sito nella finestra indicata (ricalcolo indipendente Astropy).</b>')
+                +'<br/>Orari dell\'indice: ora locale '+html.escape(tz)+'.<br/>'
                 'I dati e gli orari mostrati nelle tabelle TAPIR sottostanti sono quelli originali TAPIR '
                 'e possono essere espressi in UTC.<br/>TAPIR è utilizzato come formato di presentazione '
                 'dettagliato; classificazione, selezione e verifiche operative sono determinate dal planner.</div>')
@@ -564,6 +572,88 @@ def write_ephemeris_100(out,rows,tz):
     return rows
 
 
+def consegna_partition(events):
+    """(tutti, favorevoli, altri) per la consegna UAN. Nessuna nuova soglia e nessuna
+    riclassificazione: `tutti` sono gli eventi eleggibili in ordine cronologico (ephemeris_rows),
+    `favorevoli` quelli che internamente sono gia' PRIMA SCELTA, `altri` esattamente il resto.
+    Per costruzione favorevoli e altri sono disgiunti e la loro unione e' l'insieme eleggibile."""
+    allrows=ephemeris_rows(events)
+    fav=[r for r in allrows if r['quality_class']=='PRIMA SCELTA']
+    other=[r for r in allrows if r['quality_class']!='PRIMA SCELTA']
+    return allrows,fav,other
+
+
+def consegna_summary_document(rows,targets,tz):
+    """0_RIEPILOGO_TRANSITI_COMPLETI: tabella tecnica compatta di TUTTI gli eventi eleggibili.
+    Nessuna tassonomia interna (classi, ruoli, score, logistica, reason codes, rischio lunare)."""
+    head=('<tr><th>Data</th><th>Target</th><th>Ingresso</th><th>Centro</th><th>Uscita</th>'
+          '<th>Elevazione i/c/u</th><th>Baseline prima/dopo</th><th>Luna</th>'
+          '<th>Finestra osservativa suggerita</th></tr>')
+    body=['<table class="cal">'+head]
+    current=None
+    for r in rows:
+        mid=datetime.fromisoformat(r['mid_local'])
+        if (mid.year,mid.month)!=current:
+            current=(mid.year,mid.month)
+            body.append('<tr class="monthrow"><td colspan="9">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
+        window='&mdash;'
+        if r.get('practical_start_local') and r.get('practical_transit_end_limit_local'):
+            window=(datetime.fromisoformat(r['practical_start_local']).strftime('%H:%M')+'&ndash;'
+                    +datetime.fromisoformat(r['practical_transit_end_limit_local']).strftime('%H:%M'))
+        body.append('<tr>'
+            +'<td>'+mid.strftime('%d/%m')+'</td><td class="tgt">'+html.escape(r['target'])+'</td>'
+            +'<td>'+datetime.fromisoformat(r['ingress_local']).strftime('%H:%M')+'</td>'
+            +'<td>'+mid.strftime('%H:%M')+'</td>'
+            +'<td>'+datetime.fromisoformat(r['egress_local']).strftime('%H:%M')+'</td>'
+            +'<td>'+fmt(r['altitude_ingress_deg'],0)+'/'+fmt(r['altitude_mid_deg'],0)+'/'+fmt(r['altitude_egress_deg'],0)+'&deg;</td>'
+            +'<td>'+fmt(r['baseline_before_percent'],0)+'% / '+fmt(r['baseline_after_percent'],0)+'%</td>'
+            +'<td>'+fmt(r['moon_illumination_percent'],0)+'% @ '+fmt(r['moon_min_separation_deg'],0)+'&deg;</td>'
+            +'<td>'+window+'</td></tr>')
+    body.append('</table>')
+    names=[t['name'] for t in targets]
+    with_events=sorted({r['target'] for r in rows})
+    without=[n for n in names if n not in set(with_events)]
+    period=(rows[0]['mid_local'][:10]+' → '+rows[-1]['mid_local'][:10]) if rows else 'n/d'
+    cover=('<div class="coverbox"><h1>EFFEMERIDI DEI TRANSITI INTEGRALMENTE OSSERVABILI</h1>'
+           '<p>Osservatorio di Capodimonte · orari locali '+html.escape(tz)+'</p>'
+           '<p><b>'+str(len(rows))+' transiti completi</b> · periodo '+period+'</p>'
+           '<p>Target analizzati: '+str(len(names))+' · con almeno un transito completo: '
+           +str(len(with_events))+' · senza alcun transito completo nella finestra analizzata: '
+           +str(len(without))+(' ('+html.escape(', '.join(without))+')' if without else '')+'</p></div>'
+           '<p style="font-size:10px">Elevazione i/c/u = altezza del target a ingresso, centro e uscita del '
+           'transito. Baseline prima/dopo = frazione osservabile della finestra richiesta ai due lati del '
+           'transito. Luna = illuminazione @ separazione angolare minima. La finestra osservativa suggerita '
+           'e\' l\'intervallo utile della serata; il transito e\' comunque osservabile per intero.</p>')
+    return _HEAD.format(title='EFFEMERIDI DEI TRANSITI INTEGRALMENTE OSSERVABILI',assets='',
+                        body=cover+'\n'.join(body))
+
+
+def write_consegna_uan(out,archive,events,target_map,p,tz):
+    """CONSEGNA_UAN/: i tre PDF per la sezione, senza tassonomia interna. Solo presentazione:
+    riusa ephemeris_rows, ensure_tapir_fragment, tapir_dossier_document e _chromium_render,
+    non tocca classificazione, selezione, archivio o metriche."""
+    allrows,fav,other=consegna_partition(events)
+    folder=out/'CONSEGNA_UAN';folder.mkdir(exist_ok=True)
+    if not _chromium_render(consegna_summary_document(allrows,list(target_map.values()),tz),
+                            folder/'0_RIEPILOGO_TRANSITI_COMPLETI.pdf'):
+        raise ValueError('Rendering PDF fallito per 0_RIEPILOGO_TRANSITI_COMPLETI (chromium)')
+    dossiers=[('1_CONDIZIONI_PIU_FAVOREVOLI',fav,'OCCASIONI CON CONDIZIONI PIÙ FAVOREVOLI',
+               'Selezione orientativa del planner tra i transiti integralmente osservabili; '
+               'i dati tecnici TAPIR sono riportati per la valutazione osservativa.'),
+              ('2_ALTRE_OCCASIONI_TRANSITO_COMPLETO',other,'ALTRE OCCASIONI CON TRANSITO COMPLETO',
+               'Tutti gli altri transiti integralmente osservabili nella finestra analizzata.')]
+    for base,rows,title,subtitle in dossiers:
+        for e in rows:
+            e['tapir_event_html']=ensure_tapir_fragment(e,target_map[e['name']],p,archive)
+        doc,broken=tapir_dossier_document(rows,archive,tz,title,'',show_roles=False,subtitle=subtitle)
+        if doc is None:
+            raise ValueError('Frammento TAPIR mancante per '+broken+' nella consegna UAN')
+        if not _chromium_render(doc,folder/(base+'.pdf')):
+            raise ValueError('Rendering PDF fallito per '+base+' (chromium)')
+        print(f'CONSEGNA_UAN/{base}: {len(rows)} finding',flush=True)
+    return len(allrows),len(fav),len(other)
+
+
 def write_calendar_files(archive,rows,name='calendario_prima_scelta'):
     """Machine-readable calendar (CSV+JSON), already chronological."""
     clean=[{k:(e.get(k) if k!='reason_codes' else list(e.get('reason_codes') or [])) for k in CALENDAR_FIELDS} for e in rows]
@@ -640,6 +730,10 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
         if not _chromium_render(doc,out/(base+'.pdf')):
             raise ValueError('Rendering PDF fallito per '+base+' (chromium)')
         print(f'Dossier {base}: {len(rows)} finding, {made} tabelle TAPIR generate',flush=True)
+    n_all,n_fav,n_other=write_consegna_uan(out,archive,events,target_map,p,tz)
+    manifest['reporting']['consegna_uan']={'folder':'CONSEGNA_UAN','pdf_only':True,
+        'total_full_transits':n_all,'favourable':n_fav,'other':n_other,
+        'scope':'all and only eligible; favourable = internal PRIMA SCELTA, other = the rest'}
     index=[]
     target_summaries=[]
     style='<style>body{font:16px system-ui;max-width:1200px;margin:32px auto;color:#163541;padding:16px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px;text-align:left;border-bottom:1px solid #ccd8de}th{background:#e5eef2}details{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126a8a}</style>'
@@ -714,6 +808,10 @@ come tabelle TAPIR originali; ruoli PRIMARY/BACKUP1/BACKUP2 del target, gli altr
 2_ALTERNATIVE.pdf: TUTTI gli eventi ALTERNATIVE con logistica P1, stessa struttura.
 3_DA_VALUTARE.pdf: shortlist di review per target (massimo {p['max_review_events_per_target']}, motivo esplicito), solo P1.
 0_CALENDARIO_OPERATIVO.pdf: PRIMA SCELTA e ALTERNATIVE (P1) insieme, cronologico.
+CONSEGNA_UAN/: i tre PDF destinati alla sezione, senza la tassonomia interna del planner.
+0_RIEPILOGO_TRANSITI_COMPLETI.pdf: tutti i transiti integralmente osservabili, cronologico.
+1_CONDIZIONI_PIU_FAVOREVOLI.pdf e 2_ALTRE_OCCASIONI_TRANSITO_COMPLETO.pdf: le schede TAPIR
+complete; insieme contengono esattamente gli stessi eventi del riepilogo, senza ripetizioni.
 0_EFFEMERIDI_100.html/.csv: la lista esaustiva richiesta dalla UAN - TUTTI e SOLI gli eventi
 con transito completo al 100%, senza altri filtri (tutte le classi, tutte le logistiche,
 anche senza ruolo). E' la vista completa, non un sottoinsieme operativo.

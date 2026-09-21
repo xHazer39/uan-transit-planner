@@ -54,6 +54,14 @@ uan-transits plan "WASP-77 A b" --cache ARCHIVIO/9_ARCHIVIO_COMPLETO/dati_origin
 
 ```text
 GaetanoTrovato_<timestamp>/
+├── CONSEGNA_UAN/                              PACCHETTO PER LA SEZIONE (solo PDF)
+│   ├── 0_RIEPILOGO_TRANSITI_COMPLETI.pdf          tutti i transiti integralmente osservabili
+│   ├── 1_CONDIZIONI_PIU_FAVOREVOLI.pdf            schede TAPIR complete, occasioni migliori
+│   └── 2_ALTRE_OCCASIONI_TRANSITO_COMPLETO.pdf    schede TAPIR complete, tutte le altre
+│       Vista di presentazione: 1 e 2 partizionano esattamente gli eventi eleggibili
+│       (nessuna ripetizione, nessuna omissione) e non espongono la tassonomia interna
+│       (classi, ruoli PRIMARY/BACKUP/EXTRA, score, P1/P2/P3, reason codes).
+│
 ├── 0_EFFEMERIDI_100.html/csv                  LIVELLO 0 — VISTA COMPLETA UAN
 │       "Tutte le effemeridi con transito realmente completo."
 │       TUTTI e SOLI gli eventi eligible (copertura 100% ricalcolata),

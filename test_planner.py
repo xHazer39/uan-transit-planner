@@ -7,6 +7,23 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from observing import coverage, intervals, logistic_bounds, classify
 
+def write_tapir_fragment(archive,e):
+    """Frammento TAPIR minimo ma valido (target + midpoint) per i test che passano da
+    ensure_tapir_fragment senza avere un engine TAPIR."""
+    mid=datetime.fromisoformat(e['mid_utc']).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M')
+    page=('<!doctype html><html><head><style>.x{}</style></head><body>'
+          '<table id="target_table"><tr><th>Data</th><th>Name</th><th>V or Gaia mag</th>'
+          '<th>Start&mdash; Mid &mdash;End</th><th>Duration</th></tr>'
+          '<tr><td>2026-10-01 17:30 2026-10-02 06:30</td>'
+          f'<td><a href="#">{e["name"]}</a> Finding charts: Annotated , Aladin ; Airmass plot , ACP plan '
+          'Info: Exoplanet Archive</td><td>10.3</td>'
+          f'<td>{mid} {mid} {mid} {mid} {mid}</td><td>2:46</td></tr></table>'
+          '<p>MARKER_TAPIR_ROW</p></body></html>')
+    folder=archive/slug(e['name']);folder.mkdir(parents=True,exist_ok=True)
+    (folder/f'tapir_event_c{e["cycle"]}.html').write_text(page)
+    return page
+
+
 class PlannerChecks(unittest.TestCase):
     def test_bad_tapir_percentage_is_not_input_to_coverage(self):
         self.assertAlmostEqual(coverage(0, 100, [(54.7, 140)]), 45.3)
@@ -910,15 +927,25 @@ class EphemerisViewChecks(unittest.TestCase):
         p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
         # P2/P3: niente dossier TAPIR da generare, la vista li include comunque (nessun filtro logistico)
         events=[self.ev('A b',1,0,log='P2'),self.ev('B b',2,5,cat='DA VALUTARE',log='P3'),self.ev('C b',3,10,uncovered=900)]
-        targets=[dict(name=n,RA='12:00:00',Dec='+00:00:00') for n in ('A b','B b','C b')]
+        targets=[dict(name=n,RA='12:00:00',Dec='+00:00:00',period='2.5') for n in ('A b','B b','C b')]
         m=dict(profile=p,created_utc='2026-09-21',start='2026-09-21',end_exclusive='2026-12-21',
                tapir_commit='test-only',command='test-only')
         with tempfile.TemporaryDirectory() as d:
             out=Path(d);(out/'9_ARCHIVIO_COMPLETO').mkdir()
+            # CONSEGNA_UAN pretende la scheda TAPIR di ogni eleggibile: le pre-creo valide,
+            # cosi' ensure_tapir_fragment le riusa senza interrogare TAPIR.
+            for e in events:
+                if e['eligible']: write_tapir_fragment(out/'9_ARCHIVIO_COMPLETO',e)
             write_reports(out,events,targets,[],m)
             rows=list(_csv.DictReader((out/'0_EFFEMERIDI_100.csv').open(encoding='utf-8')))
             html=(out/'0_EFFEMERIDI_100.html').read_text()
             archive=json.loads((out/'9_ARCHIVIO_COMPLETO/risultati.json').read_text())
+            consegna=sorted(f.name for f in (out/'CONSEGNA_UAN').iterdir())
+        self.assertEqual(consegna,['0_RIEPILOGO_TRANSITI_COMPLETI.pdf','1_CONDIZIONI_PIU_FAVOREVOLI.pdf',
+                                   '2_ALTRE_OCCASIONI_TRANSITO_COMPLETO.pdf'])   # solo i tre PDF
+        self.assertEqual((m['reporting']['consegna_uan']['favourable'],
+                          m['reporting']['consegna_uan']['other'],
+                          m['reporting']['consegna_uan']['total_full_transits']),(1,1,2))
         self.assertEqual([r['event_id'] for r in rows],['A_b-c1','B_b-c2'])
         self.assertEqual({r['event_id'] for r in rows},
                          {slug(e['name'])+'-c'+str(e['cycle']) for e in archive if e['eligible']})
@@ -927,6 +954,91 @@ class EphemerisViewChecks(unittest.TestCase):
         self.assertEqual(html.count('<tr class="q-'),2)          # una riga per evento eleggibile, zero esclusi
         self.assertIn('>A b<',html);self.assertIn('>B b<',html);self.assertNotIn('>C b<',html)
         self.assertTrue(all(float(r['transit_uncovered_seconds'])<=TOL for r in rows))
+
+
+class ConsegnaUanChecks(unittest.TestCase):
+    """CONSEGNA_UAN: presentazione, nessuna nuova categoria. PDF1 e PDF2 partizionano gli eleggibili."""
+    def ev(self,name,cycle,days,uncovered=0.0,cat='PRIMA SCELTA',log='P1',role=None):
+        from datetime import datetime,timezone,timedelta
+        from observing import evaluate
+        mid=datetime(2026,11,1,22,0,tzinfo=timezone.utc)+timedelta(days=days)
+        e=dict(name=name,cycle=cycle,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
+               ingress_utc=mid.isoformat(),egress_utc=mid.isoformat(),
+               ingress_local=mid.isoformat(),egress_local=mid.isoformat(),
+               practical_start_local=mid.isoformat(),practical_transit_end_limit_local=mid.isoformat(),
+               max_altitude_theoretical_deg=55,altitude_min_deg=31,altitude_mid_deg=40,altitude_max_deg=45,
+               transit_percent=100.0 if uncovered==0 else 99.9,transit_uncovered_seconds=uncovered,
+               duration_minutes=180,baseline_before_percent=100,baseline_after_percent=100,
+               practical_transit_percent=100,practical=True,uncertainty_minutes=1,
+               moon_risk='ESTREMA' if cat=='DA VALUTARE' else 'BASSA',
+               magnitude=11,depth_ppt=12,ttv=False,moon_up_during_observable=cat=='DA VALUTARE',
+               moon_illumination_percent=95 if cat=='DA VALUTARE' else 5,
+               moon_separation_deg=10 if cat=='DA VALUTARE' else 120,
+               moon_min_separation_deg=10 if cat=='DA VALUTARE' else 120,
+               altitude_ingress_deg=35,altitude_egress_deg=33,timing_check_failed=False,
+               logistics_class=log,reference='')
+        if cat=='ALTERNATIVE': e['baseline_after_percent']=60
+        evaluate(e,json.loads((Path(__file__).parent/'capodimonte.json').read_text()))
+        if role: e['selection_role']=role
+        return e
+    def events(self):
+        return [self.ev('A b',1,0),                                   # PRIMA SCELTA
+                self.ev('B b',2,3,cat='ALTERNATIVE'),                 # ALTERNATIVE
+                self.ev('C b',3,6,cat='DA VALUTARE',log='P3'),        # DA VALUTARE, fuori serata
+                self.ev('D b',4,9,log='P2'),                          # PRIMA SCELTA, P2
+                self.ev('E b',5,12,uncovered=600)]                    # parziale: fuori consegna
+    def test_partition_is_disjoint_and_covers_every_eligible(self):
+        from reports import consegna_partition
+        events=self.events()
+        allrows,fav,other=consegna_partition(events)
+        ids=lambda rows:{r['event_id'] for r in rows}
+        eligible={slug(e['name'])+'-c'+str(e['cycle']) for e in events if e['eligible']}
+        self.assertEqual(ids(allrows),eligible)
+        self.assertEqual(len(allrows),len(eligible))
+        self.assertEqual(ids(fav)&ids(other),set())
+        self.assertEqual(ids(fav)|ids(other),eligible)
+        self.assertEqual(len(fav)+len(other),len(allrows))
+        self.assertEqual(ids(fav),{'A_b-c1','D_b-c4'})                # PRIMA SCELTA, P1 e P2
+        self.assertEqual(ids(other),{'B_b-c2','C_b-c3'})              # ALTERNATIVE e DA VALUTARE
+        self.assertNotIn('E_b-c5',ids(allrows))                       # nessun non eleggibile
+        mids=[r['mid_local'] for r in allrows]
+        self.assertEqual(mids,sorted(mids))
+    def test_summary_has_every_eligible_row_and_no_internal_taxonomy(self):
+        from reports import consegna_partition,consegna_summary_document
+        events=self.events()
+        allrows,_,_=consegna_partition(events)
+        targets=[dict(name=n) for n in ('A b','B b','C b','D b','E b','Z b')]
+        doc=consegna_summary_document(allrows,targets,'Europe/Rome')
+        self.assertEqual(doc.count('<tr>')-1,len(allrows))            # -1: riga di intestazione
+        self.assertIn('EFFEMERIDI DEI TRANSITI INTEGRALMENTE OSSERVABILI',doc)
+        self.assertIn('Osservatorio di Capodimonte',doc)
+        self.assertIn('senza alcun transito completo nella finestra analizzata: 2',doc)  # E b e Z b
+        for banned in ('PRIMA SCELTA','ALTERNATIVE','DA VALUTARE','NON CONSIGLIATO','PRIMARY',
+                       'BACKUP1','BACKUP2','EXTRA','Score','ESTREMA','MODERATA','Trans%','P1','P3'):
+            self.assertNotIn(banned,doc,banned)
+        for name in ('A b','B b','C b','D b'):
+            self.assertIn('>'+name+'<',doc)
+        self.assertNotIn('>E b<',doc)
+    def test_dossier_without_roles_keeps_fragments_and_hides_taxonomy(self):
+        import tempfile,os
+        from reports import tapir_dossier_document
+        frag=('<!doctype html><html><head><style>.x{}</style></head><body><table id="t">'
+              '<tr><th>Name</th></tr><tr><td>MARKER_TAPIR_ROW</td></tr></table></body></html>')
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(d+'/T')
+            Path(d+'/T/frag.html').write_text(frag)
+            rows=[dict(name='WASP-77 A b',cycle=1050,event_id='WASP-77_A_b-c1050',
+                       mid_local='2027-01-09T19:53:00+01:00',display_role='BACKUP2',
+                       tapir_event_html='T/frag.html')]
+            doc,broken=tapir_dossier_document(rows,Path(d),'Europe/Rome','OCCASIONI CON CONDIZIONI PIÙ FAVOREVOLI',
+                                              '',show_roles=False,subtitle='Selezione orientativa del planner')
+            with_roles,_=tapir_dossier_document(rows,Path(d),'Europe/Rome','UAN - PRIMA SCELTA','LEGENDA')
+        self.assertIsNone(broken)
+        self.assertIn('MARKER_TAPIR_ROW',doc)                          # scheda TAPIR intatta
+        self.assertIn('>WASP-77 A b</b> — centro locale 09/01/2027 19:53',doc)
+        self.assertNotIn('BACKUP2',doc);self.assertNotIn('Ruolo',doc);self.assertNotIn('LEGENDA',doc)
+        self.assertIn('Selezione orientativa del planner',doc)
+        self.assertIn('BACKUP2',with_roles)                            # il dossier tecnico non cambia
 
 
 if __name__=='__main__': unittest.main()
