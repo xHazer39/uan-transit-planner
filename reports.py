@@ -491,6 +491,79 @@ def tapir_dossier_document(rows,archive,tz,title,role_legend):
     return doc,None
 
 
+EPHEMERIS_FIELDS=['event_id','target','data_locale','ingress_local','mid_local','egress_local',
+                  'transit_percent','transit_uncovered_seconds','quality_class','logistics_class',
+                  'baseline_before_percent','baseline_after_percent','altitude_min_deg','altitude_mid_deg',
+                  'moon_illumination_percent','moon_min_separation_deg','moon_risk','score','selection_role',
+                  'reason_codes']
+
+
+def ephemeris_rows(events):
+    """La vista UAN: TUTTI e SOLI gli eventi eleggibili (transito 100% reale), in ordine
+    cronologico globale per mid_local. Nessun altro filtro: nessuna classe, logistica, ruolo,
+    baseline, Luna, quota o score. Presentazione: non muta gli eventi."""
+    rows=[]
+    for e in events:
+        if not e.get('eligible'):
+            continue
+        r=dict(e)
+        r['event_id']=slug(e['name'])+'-c'+str(e['cycle'])
+        r['target']=e['name']
+        r['data_locale']=datetime.fromisoformat(e['mid_local']).strftime('%d/%m/%Y')
+        rows.append(r)
+    rows.sort(key=lambda r:datetime.fromisoformat(r['mid_local']))
+    return rows
+
+
+def write_ephemeris_100(out,rows,tz):
+    """0_EFFEMERIDI_100.csv/.html: la lista esaustiva richiesta dalla UAN."""
+    with (out/'0_EFFEMERIDI_100.csv').open('w',newline='',encoding='utf-8') as f:
+        w=csv.DictWriter(f,fieldnames=EPHEMERIS_FIELDS,extrasaction='ignore')
+        w.writeheader()
+        for r in rows:
+            w.writerow({k:(json.dumps(v,ensure_ascii=False) if isinstance(v,(list,dict)) else v)
+                        for k,v in r.items() if k in EPHEMERIS_FIELDS})
+    head=('<tr><th>Data</th><th>Target</th><th>Ingresso</th><th>Centro</th><th>Uscita</th><th>Trans%</th>'
+          '<th>Non coperto (s)</th><th>Classe</th><th>Log</th><th>Base% i/f</th><th>Quota min/centro</th>'
+          '<th>Luna</th><th>Rischio</th><th>Score</th><th>Ruolo</th><th>Codes</th></tr>')
+    body=['<table class="cal">'+head]
+    current=None
+    for r in rows:
+        mid=datetime.fromisoformat(r['mid_local'])
+        if (mid.year,mid.month)!=current:
+            current=(mid.year,mid.month)
+            body.append('<tr class="monthrow"><td colspan="16">'+MONTHS_IT[mid.month-1]+' '+str(mid.year)+'</td></tr>')
+        body.append('<tr class="q-'+('prima' if r['quality_class']=='PRIMA SCELTA' else 'alt')+'">'
+            +'<td>'+mid.strftime('%d/%m')+'</td><td class="tgt">'+html.escape(r['target'])+'</td>'
+            +'<td>'+datetime.fromisoformat(r['ingress_local']).strftime('%H:%M')+'</td>'
+            +'<td>'+mid.strftime('%H:%M')+'</td>'
+            +'<td>'+datetime.fromisoformat(r['egress_local']).strftime('%H:%M')+'</td>'
+            +'<td>'+fmt(r['transit_percent'],1)+'</td><td>'+fmt(r['transit_uncovered_seconds'],3)+'</td>'
+            +'<td class="q">'+html.escape(r['quality_class'])+'</td><td>'+html.escape(r['logistics_class'])+'</td>'
+            +'<td>'+fmt(r['baseline_before_percent'],0)+'/'+fmt(r['baseline_after_percent'],0)+'</td>'
+            +'<td>'+fmt(r['altitude_min_deg'],0)+'/'+fmt(r['altitude_mid_deg'],0)+'</td>'
+            +'<td>'+fmt(r['moon_illumination_percent'],0)+'% @'+fmt(r['moon_min_separation_deg'],0)+'&deg;</td>'
+            +'<td>'+html.escape(r.get('moon_risk') or '&mdash;')+'</td>'
+            +'<td>'+fmt(r.get('score'),1)+'</td><td class="role">'+(r.get('selection_role') or '&mdash;')+'</td>'
+            +'<td class="codes">'+(','.join(r.get('reason_codes') or []) or '&mdash;')+'</td></tr>')
+    body.append('</table>')
+    ntarget=len({r['target'] for r in rows})
+    period=(rows[0]['mid_local'][:10]+' → '+rows[-1]['mid_local'][:10]) if rows else 'n/d'
+    cover=(f'<div class="coverbox"><h1>EFFEMERIDI — TRANSITI COMPLETI AL 100%</h1>'
+           f'<p><b>{len(rows)} eventi</b> · {ntarget} target · periodo {period} · ora locale {html.escape(tz)}</p>'
+           f'<p>TUTTI e SOLI gli eventi con transito osservabile al 100% (ricalcolo indipendente Astropy, '
+           f'durata non coperta ≤ 0.001 s). Nessun altro filtro: sono incluse tutte le classi '
+           f'(PRIMA SCELTA, ALTERNATIVE, DA VALUTARE, NON CONSIGLIATO) e tutte le logistiche (P1/P2/P3), '
+           f'anche gli eventi senza ruolo PRIMARY/BACKUP. Gli eventi con transito parziale non compaiono '
+           f'qui: restano in 9_ARCHIVIO_COMPLETO con exclusion_reason=TRANSIT_NOT_100.</p></div>'
+           f'<p style="font-size:10px">Log = P1 transito interamente nella serata operativa, P2 parziale, '
+           f'P3 fuori serata. Base% i/f = baseline osservabile prima/dopo. Quota = minima/centro del transito. '
+           f'Luna = illuminazione @ separazione minima. Copertura e baseline sono ricalcoli indipendenti.</p>')
+    (out/'0_EFFEMERIDI_100.html').write_text(_HEAD.format(title='UAN — EFFEMERIDI 100%',assets='',
+                                                          body=cover+'\n'.join(body)),encoding='utf-8')
+    return rows
+
+
 def write_calendar_files(archive,rows,name='calendario_prima_scelta'):
     """Machine-readable calendar (CSV+JSON), already chronological."""
     clean=[{k:(e.get(k) if k!='reason_codes' else list(e.get('reason_codes') or [])) for k in CALENDAR_FIELDS} for e in rows]
@@ -531,9 +604,11 @@ def write_reports(out,events,targets,rejections,manifest,selection=None):
     write_calendar_files(archive,cal1)
     write_calendar_files(archive,cal0,'0_CALENDARIO_OPERATIVO')
     write_google_calendar(archive,cal1)
+    eph=write_ephemeris_100(out,ephemeris_rows(events),tz)
     if not calendar_pdf(out/'0_CALENDARIO_OPERATIVO.pdf','CALENDARIO OPERATIVO - PRIMA SCELTA e ALTERNATIVE',cal0,tz,target_map,p):
         raise ValueError('Rendering PDF fallito per 0_CALENDARIO_OPERATIVO (chromium)')
     manifest['reporting']={'calendar_mode':'chronological','timezone':tz,
+        'ephemeris_100_events':len(eph),'ephemeris_100_scope':'all and only eligible (full transit)',
         'first_choice_scope':'all PRIMA SCELTA + P1',
         'selection_roles_preserved':True,'extra_events_visible':True,
         'calendar_events':len(cal1),'calendar_extra_events':sum(1 for e in cal1 if e['display_role']=='EXTRA'),
@@ -639,6 +714,9 @@ come tabelle TAPIR originali; ruoli PRIMARY/BACKUP1/BACKUP2 del target, gli altr
 2_ALTERNATIVE.pdf: TUTTI gli eventi ALTERNATIVE con logistica P1, stessa struttura.
 3_DA_VALUTARE.pdf: shortlist di review per target (massimo {p['max_review_events_per_target']}, motivo esplicito), solo P1.
 0_CALENDARIO_OPERATIVO.pdf: PRIMA SCELTA e ALTERNATIVE (P1) insieme, cronologico.
+0_EFFEMERIDI_100.html/.csv: la lista esaustiva richiesta dalla UAN - TUTTI e SOLI gli eventi
+con transito completo al 100%, senza altri filtri (tutte le classi, tutte le logistiche,
+anche senza ruolo). E' la vista completa, non un sottoinsieme operativo.
 9_ARCHIVIO_COMPLETO/index.html: TUTTI gli eventi, anche fuori orario e non consigliati.
 risultati.csv / risultati.json: metriche e reason codes completi. target_esclusi.json: esclusioni.
 riepilogo_target.csv: geometria del sito, candidati operativi e selezione per target.

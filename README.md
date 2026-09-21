@@ -54,6 +54,13 @@ uan-transits plan "WASP-77 A b" --cache ARCHIVIO/9_ARCHIVIO_COMPLETO/dati_origin
 
 ```text
 GaetanoTrovato_<timestamp>/
+├── 0_EFFEMERIDI_100.html/csv                  LIVELLO 0 — VISTA COMPLETA UAN
+│       "Tutte le effemeridi con transito realmente completo."
+│       TUTTI e SOLI gli eventi eligible (copertura 100% ricalcolata),
+│       senza nessun altro filtro: tutte le quality_class, tutte le
+│       logistiche P1/P2/P3, anche gli eventi senza ruolo.
+│       Ordine cronologico globale (Europe/Rome).
+│
 ├── 0_CALENDARIO_OPERATIVO.pdf/html/csv/json   LIVELLO 1 — DECISIONE
 │       "Qual è la prossima osservazione buona o ottimale?"
 │       TUTTI gli eventi (PRIMA SCELTA o ALTERNATIVE) AND P1,
@@ -85,6 +92,12 @@ GaetanoTrovato_<timestamp>/
     └── <target>/                   tabelle TAPIR originali per target
 ```
 
+**I quattro livelli in una riga:** `0_EFFEMERIDI_100` = tutti e soli gli eventi con transito
+completo al 100%, nessun altro filtro (la lista richiesta dalla sezione) · `0_CALENDARIO_OPERATIVO`
+= il sottoinsieme operativo (PRIMA SCELTA o ALTERNATIVE, logistica P1) · `1`/`2`/`3` = i dossier
+dettagliati per classe, con le tabelle TAPIR autentiche · `9_ARCHIVIO_COMPLETO` = tutti i cicli
+enumerati, inclusi i non eleggibili con il motivo dell'esclusione.
+
 **Orari:** indice e calendario in ora locale (Europe/Rome, offset esplicito);
 le tabelle TAPIR incorporate sono in UTC e lo dicono. Le due fonti non si mescolano mai
 senza etichetta.
@@ -96,7 +109,7 @@ per evento, in ordine:
 
 | # | Controllo | Regola |
 |---|---|---|
-| 0 | **Eleggibilità (v2.2)** | solo transiti con copertura **100% reale** ricalcolata da Astropy: durata non coperta ≤ 0.001 s (`transit_uncovered_seconds`, tolleranza numerica sopra il rumore float, sotto la risoluzione della griglia 120 s; nessun `round`, nessuna soglia %). Altrimenti `eligible=false`, `exclusion_reason=TRANSIT_NOT_100`, categoria archivio `NON ELEGGIBILE`: **nessuna** quality_class, logistics_class, score, ruolo o report operativo; l'evento resta in `risultati.csv/json` |
+| 0 | **Eleggibilità (v2.2)** — la vista `0_EFFEMERIDI_100` contiene esattamente gli eventi che superano questo gate | solo transiti con copertura **100% reale** ricalcolata da Astropy: durata non coperta ≤ 0.001 s (`transit_uncovered_seconds`, tolleranza numerica sopra il rumore float, sotto la risoluzione della griglia 120 s; nessun `round`, nessuna soglia %). Altrimenti `eligible=false`, `exclusion_reason=TRANSIT_NOT_100`, categoria archivio `NON ELEGGIBILE`: **nessuna** quality_class, logistics_class, score, ruolo o report operativo; l'evento resta in `risultati.csv/json` |
 | 1 | Integrità temporale | residuo BJD > 2 s, TTV, σ centro > 10 min → `DA VALUTARE` |
 | 2 | Geometria del target | quota teorica < 15° → `NON CONSIGLIATO DAL SITO` (15-20 MOLTO DIFFICILE, 20-30 MARGINALE, 30-40 BUONO, ≥40 MOLTO FAVOREVOLE) |
 | 3 | Copertura transito | raggiunto solo da transiti al 100% (gate 0); le soglie storiche restano nel codice: < 90% → `DA VALUTARE`; 90-99.5% → max `ALTERNATIVE`; ≥ 99.5% → eleggibile PRIMA SCELTA |

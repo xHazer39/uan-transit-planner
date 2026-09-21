@@ -339,3 +339,42 @@ travel time, ~5 s/giorno, non gli 8 minuti ipotizzati).
 
 55/55 test; verify_output PASS sul pacchetto annuale riclassificato e su un
 pacchetto smoke con target diversi.
+
+# Vista 0_EFFEMERIDI_100 e boundary audit (21 settembre 2026)
+
+Vista nuova, solo reporting: `0_EFFEMERIDI_100.html` + `.csv` nella radice del pacchetto,
+TUTTI e SOLI gli eventi con `eligible == true`, ordine cronologico globale (Europe/Rome),
+senza nessun altro filtro (tutte le quality_class, tutte le logistiche, anche senza ruolo).
+Sul run annuale: 1106 righe = 1106 eventi eleggibili, zero duplicati, `transit_percent`
+tutti 100.0 e `transit_uncovered_seconds` tutti 0.0; composizione PRIMA SCELTA 311,
+ALTERNATIVE 318, DA VALUTARE 477; P1 415, P2 410, P3 281; 956 eventi senza ruolo
+(che i calendari operativi non mostravano). verify_output e i test dimostrano
+`set(0_EFFEMERIDI_100) == set(eventi eligible)` senza numeri hardcoded.
+
+Invarianza verificata dopo la modifica (reporting-only): 13264 cicli identici, ZERO campi
+diversi su tutti gli eventi, 0_CALENDARIO_OPERATIVO.json / calendario_prima_scelta.json /
+riepilogo_target.json e i dossier 1/2/3 byte-identici.
+
+Boundary audit ad alta risoluzione sugli 11 eventi con 99.5% <= copertura < 100%
+(solo quelli: gli altri 13253 non sono stati ricalcolati). Sampling 120 s (archivio),
+30 s e, per i casi entro 30 s dalla soglia, 10 s. Tolleranza del gate: 1e-3 s.
+
+```
+target        cycle  mid_local          cov120    cov30    cov10   unc120  unc30  unc10  eligible
+WASP-3 b       2566  2026-10-23 20:34  99.8765  99.8765  99.8765   12.40  12.40  12.40  False
+WASP-77 A b    1042  2026-11-30 00:36  99.8061  99.8061  99.8061   15.15  15.15  15.15  False
+WASP-76 b      1150  2026-12-12 19:33  99.5359  99.5357      n/d   63.49  63.51    n/d  False
+WASP-12 b      3476  2026-12-26 19:50  99.7759  99.7757  99.7757   24.21  24.22  24.22  False
+HAT-P-36 b     2667  2027-01-19 22:56  99.5778  99.5774      n/d   33.90  33.93    n/d  False
+WASP-3 b       2656  2027-04-08 01:42  99.5470  99.5467      n/d   45.50  45.53    n/d  False
+KELT-9 b       1745  2027-05-15 02:32  99.5922  99.5927      n/d   61.07  61.00    n/d  False
+Qatar-1 b      2807  2027-05-30 22:30  99.7996  99.8001  99.8001   11.97  11.95  11.94  False
+WASP-114 b     2792  2027-06-10 02:14  99.6596  99.6596      n/d   34.06  34.06    n/d  False
+WASP-103 b     4660  2027-08-03 22:42  99.9083  99.9084  99.9084    8.55   8.54   8.54  False
+WASP-93 b      2031  2027-08-11 22:20  99.9584  99.9585  99.9585    3.34   3.33   3.33  False
+```
+
+11/11 restano non eleggibili: nessun cambio di stato, nessun dato o output modificato.
+Il caso piu' vicino alla soglia (WASP-93 b, 3.33 s scoperti) sta 3300 volte sopra la
+tolleranza; la differenza fra 120 s e 10 s di sampling e' al massimo ~0.03 s, quindi
+la griglia non e' il fattore limitante e la classificazione del gate e' stabile.

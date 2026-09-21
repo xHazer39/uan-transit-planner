@@ -1,5 +1,5 @@
 """Run after a plan: validate completeness, provenance and numerical convergence."""
-import json,sys,math,hashlib,zipfile
+import json,sys,math,hashlib,zipfile,csv
 from pathlib import Path
 from datetime import datetime,time
 from zoneinfo import ZoneInfo
@@ -200,6 +200,28 @@ for e in [e for e in events if 1<e['transit_percent']<99][:3]:
     convergence.append({'target':e['name'],'mid_utc':e['mid_utc'],'coverage_difference_percentage_points':delta})
 # Concrete historic interval: 20:33--23:03, visible from 21:55; 68/150 = 45.333%.
 assert abs(coverage(0,150,[(82,211)])-45.3333333333)<1e-8
+# 0_EFFEMERIDI_100: exactly the eligible set, chronological, no duplicates, nothing missing.
+eph=list(csv.DictReader((out/'0_EFFEMERIDI_100.csv').open(encoding='utf-8')))
+eph_html=(out/'0_EFFEMERIDI_100.html').read_text()
+eligible_ids={slug(e['name'])+'-c'+str(e['cycle']) for e in events if e['eligible']}
+eph_ids=[r['event_id'] for r in eph]
+assert len(eph_ids)==len(set(eph_ids)),('effemeridi duplicate',len(eph_ids),len(set(eph_ids)))
+assert set(eph_ids)==eligible_ids,('effemeridi != eligible',len(set(eph_ids)),len(eligible_ids),
+                                   sorted(eligible_ids-set(eph_ids))[:5],sorted(set(eph_ids)-eligible_ids)[:5])
+eph_mids=[datetime.fromisoformat(r['mid_local']) for r in eph]
+assert eph_mids==sorted(eph_mids),('effemeridi non cronologiche',)
+by_id_all={slug(e['name'])+'-c'+str(e['cycle']):e for e in events}
+for r in eph:
+    e=by_id_all[r['event_id']]
+    assert e['eligible'] and e['full_transit'],('effemeridi: evento non eleggibile',r['event_id'])
+    assert e['transit_uncovered_seconds']<=TOL,('effemeridi: transito non completo',r['event_id'])
+    assert float(r['transit_uncovered_seconds'])<=TOL and float(r['transit_percent'])==100.0,r['event_id']
+    assert r['mid_local']==e['mid_local'] and r['target']==e['name'],('effemeridi: riga incoerente',r['event_id'])
+# HTML: una riga per evento del CSV (l'identita' riga-evento e' verificata sul CSV, che ha gli id)
+assert len(re.findall(r'<tr class="q-',eph_html))==len(eph),('effemeridi html: righe != csv',)
+excluded_names={e['name'] for e in events if not e['eligible']}-{e['name'] for e in events if e['eligible']}
+assert not [n for n in excluded_names if '>'+n+'<' in eph_html],('effemeridi html: target solo escluso presente',)
+assert m['reporting']['ephemeris_100_events']==len(eph)
 # Every operational output row (calendars 0/1, dossiers 1/2/3, roles) is eligible & full transit;
 # no TRANSIT_NOT_100 leaks into any operational artifact; excluded events stay in the archive.
 by_id={slug(e['name'])+'-c'+str(e['cycle']):e for e in events}
@@ -216,7 +238,7 @@ for base in exp_d:
 for r in cal+op:
     assert by_id[r['event_id']]['eligible'],('calendar row not eligible',r['event_id'])
 excluded={k for k,e in by_id.items() if not e['eligible']}
-csv_ids={slug(r['name'])+'-c'+r['cycle'] for r in __import__('csv').DictReader((archive/'risultati.csv').open(encoding='utf-8'))}
+csv_ids={slug(r['name'])+'-c'+r['cycle'] for r in csv.DictReader((archive/'risultati.csv').open(encoding='utf-8'))}
 assert excluded<=csv_ids and excluded<=set(by_id),('excluded events missing from archive',)
 assert not ({k.lower() for k in excluded}&{i.lower() for i in oper_ids}),('excluded event in operational output',)
 # DA VALUTARE semantics v2.2: full transit with another issue, never partial coverage.

@@ -1,6 +1,8 @@
+import json
 import unittest
 from pathlib import Path
 from reports import slug
+from observing import FULL_TRANSIT_TOLERANCE_SECONDS as TOL
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from observing import coverage, intervals, logistic_bounds, classify
@@ -834,6 +836,81 @@ class AuditRegressionChecks(unittest.TestCase):
         self.assertIn('durata non coperta <= 0.001 s',notes)
         self.assertNotIn("Eleggibilita' PRIMA SCELTA: copertura >= 99.5%",notes)
         self.assertIn('illum >=70%',notes)   # MOON_RULES usa >=70, non >70
+
+
+class EphemerisViewChecks(unittest.TestCase):
+    """0_EFFEMERIDI_100: TUTTI e SOLI gli eventi eleggibili, senza altri filtri (vista UAN)."""
+    def ev(self,name,cycle,days,uncovered=0.0,cat='PRIMA SCELTA',log='P1',role=None):
+        from datetime import datetime,timezone,timedelta
+        from observing import evaluate
+        mid=datetime(2026,11,1,22,0,tzinfo=timezone.utc)+timedelta(days=days)
+        e=dict(name=name,cycle=cycle,mid_utc=mid.isoformat(),mid_local=mid.isoformat(),
+               ingress_utc=mid.isoformat(),egress_utc=mid.isoformat(),
+               ingress_local=mid.isoformat(),egress_local=mid.isoformat(),
+               max_altitude_theoretical_deg=55,altitude_min_deg=31,altitude_mid_deg=40,altitude_max_deg=45,
+               transit_percent=100.0 if uncovered==0 else 99.9,transit_uncovered_seconds=uncovered,
+               duration_minutes=180,baseline_before_percent=100,baseline_after_percent=100,
+               practical_transit_percent=100,practical=True,uncertainty_minutes=1,moon_risk='BASSA',
+               magnitude=11,depth_ppt=12,ttv=cat=='DA VALUTARE',moon_up_during_observable=False,
+               moon_illumination_percent=5,moon_separation_deg=120,moon_min_separation_deg=120,
+               altitude_ingress_deg=35,altitude_egress_deg=33,timing_check_failed=False,
+               logistics_class=log,reference='')
+        evaluate(e,json.loads((Path(__file__).parent/'capodimonte.json').read_text()))
+        if role: e['selection_role']=role
+        return e
+    def rows(self,events):
+        from reports import ephemeris_rows
+        return ephemeris_rows(events)
+    def test_all_and_only_eligible_no_other_filter(self):
+        """Nessun filtro su classe, logistica o ruolo: un P3 DA VALUTARE senza ruolo c'e',
+        un transito parziale no."""
+        events=[self.ev('A b',1,0),                                   # PRIMA SCELTA P1
+                self.ev('B b',2,3,cat='DA VALUTARE',log='P3'),        # DA VALUTARE, fuori serata
+                self.ev('C b',3,6,log='P2'),                          # P2
+                self.ev('D b',4,9,uncovered=0.108),                   # 99.999%: escluso
+                self.ev('E b',5,12,uncovered=600)]                    # parziale: escluso
+        rows=self.rows(events)
+        self.assertEqual([r['event_id'] for r in rows],['A_b-c1','B_b-c2','C_b-c3'])
+        self.assertEqual({r['event_id'] for r in rows},
+                         {slug(e['name'])+'-c'+str(e['cycle']) for e in events if e['eligible']})
+        self.assertTrue(all(r['transit_percent']==100.0 and r['transit_uncovered_seconds']<=TOL for r in rows))
+        self.assertEqual({r['logistics_class'] for r in rows},{'P1','P3','P2'})
+        self.assertIn('DA VALUTARE',{r['quality_class'] for r in rows})
+        self.assertTrue(all(r.get('selection_role') is None for r in rows))
+    def test_chronological_unique_and_not_mutating(self):
+        import copy
+        events=[self.ev('Zeta b',1,9),self.ev('Alpha b',2,3),self.ev('Alpha b',3,20)]
+        snap=copy.deepcopy(events)
+        rows=self.rows(events)
+        mids=[datetime.fromisoformat(r['mid_local']) for r in rows]
+        self.assertEqual(mids,sorted(mids))
+        self.assertEqual([r['target'] for r in rows],['Alpha b','Zeta b','Alpha b'])
+        ids=[r['event_id'] for r in rows]
+        self.assertEqual(len(ids),len(set(ids)))
+        self.assertEqual(events,snap)
+    def test_written_files_match_the_eligible_set(self):
+        import tempfile,csv as _csv
+        from reports import write_reports
+        p=json.loads((Path(__file__).parent/'capodimonte.json').read_text())
+        # P2/P3: niente dossier TAPIR da generare, la vista li include comunque (nessun filtro logistico)
+        events=[self.ev('A b',1,0,log='P2'),self.ev('B b',2,5,cat='DA VALUTARE',log='P3'),self.ev('C b',3,10,uncovered=900)]
+        targets=[dict(name=n,RA='12:00:00',Dec='+00:00:00') for n in ('A b','B b','C b')]
+        m=dict(profile=p,created_utc='2026-09-21',start='2026-09-21',end_exclusive='2026-12-21',
+               tapir_commit='test-only',command='test-only')
+        with tempfile.TemporaryDirectory() as d:
+            out=Path(d);(out/'9_ARCHIVIO_COMPLETO').mkdir()
+            write_reports(out,events,targets,[],m)
+            rows=list(_csv.DictReader((out/'0_EFFEMERIDI_100.csv').open(encoding='utf-8')))
+            html=(out/'0_EFFEMERIDI_100.html').read_text()
+            archive=json.loads((out/'9_ARCHIVIO_COMPLETO/risultati.json').read_text())
+        self.assertEqual([r['event_id'] for r in rows],['A_b-c1','B_b-c2'])
+        self.assertEqual({r['event_id'] for r in rows},
+                         {slug(e['name'])+'-c'+str(e['cycle']) for e in archive if e['eligible']})
+        self.assertEqual(len(archive),3)          # l'archivio tiene anche il parziale
+        self.assertEqual(m['reporting']['ephemeris_100_events'],2)
+        self.assertEqual(html.count('<tr class="q-'),2)          # una riga per evento eleggibile, zero esclusi
+        self.assertIn('>A b<',html);self.assertIn('>B b<',html);self.assertNotIn('>C b<',html)
+        self.assertTrue(all(float(r['transit_uncovered_seconds'])<=TOL for r in rows))
 
 
 if __name__=='__main__': unittest.main()
