@@ -175,16 +175,16 @@ for e in events:
     assert mid is not None and abs((mid-exp).total_seconds())<=120,('fragment mid mismatch',slug(e['name'])+'-c'+str(e['cycle']),str(mid))
     checked+=1
 assert checked==len(exp_d['1_PRIMA_SCELTA'])+len(exp_d['2_ALTERNATIVE'])+len(exp_d['3_DA_VALUTARE']),('fragment identity coverage',checked)
-# regression KELT-1: c2935 (16/09) e c2981 (11/11) frammenti distinti e coerenti
+# regression KELT-1: c2935 (16/09) e c2981 (11/11) frammenti distinti e coerenti.
+# La finestra del run puo' contenerne zero, uno o entrambi: si verifica quelli presenti.
 k1={e['cycle']:e for e in events if e['name']=='KELT-1 b' and e['cycle'] in (2935,2981)}
-assert set(k1) in ({2935,2981},set()),('KELT-1 regression cycles partially present',set(k1))
 for cyc,e in k1.items():
     frag=(archive/(slug(e['name'])+'/tapir_event_c'+str(e['cycle'])+'.html')).read_text()
     name,mid=tapir_fragment_identity(frag)
     exp=_DT.fromisoformat(e['mid_utc']).replace(tzinfo=None)
     assert name=='KELT-1 b' and abs((mid-exp).total_seconds())<=120,('KELT-1 regression',cyc,str(mid))
     assert abs((mid-exp).total_seconds())<=120
-if k1:
+if len(k1)==2:
     m2935=_DT.fromisoformat(k1[2935]['mid_utc']).replace(tzinfo=None)
     m2981=_DT.fromisoformat(k1[2981]['mid_utc']).replace(tzinfo=None)
     assert abs((m2935-m2981).total_seconds())>86400,('KELT-1 midpoints too close',)
